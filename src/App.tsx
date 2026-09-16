@@ -70,8 +70,10 @@ export default function App() {
   // приветственный экран показывается при каждом заходе на сайт
   const [view, setView] = useState<View>('welcome')
   const [readOnlyAgreement, setReadOnlyAgreement] = useState(false)
-  // стартовая заставка: показывается при каждом заходе на сайт
-  const [showSplash, setShowSplash] = useState(true)
+  // заставка: play → handoff (логотип летит в шапку, сайт выезжает) → ready
+  const [stage, setStage] = useState<'play' | 'handoff' | 'ready'>('play')
+  const showSplash = stage !== 'ready'
+  const appEntering = stage !== 'ready'
 
   const agreementAccepted = acceptance?.version === AGREEMENT_VERSION
 
@@ -450,7 +452,8 @@ export default function App() {
     setView('agreement')
   }, [])
 
-  const dismissSplash = useCallback(() => setShowSplash(false), [])
+  const startHandoff = useCallback(() => setStage('handoff'), [])
+  const dismissSplash = useCallback(() => setStage('ready'), [])
 
   openAgreementRef.current = openAgreement
 
@@ -459,7 +462,7 @@ export default function App() {
   if (view === 'welcome') {
     return (
       <>
-        <Shell theme={theme} onToggleTheme={toggle}>
+        <Shell theme={theme} onToggleTheme={toggle} entering={appEntering}>
           <WelcomeScreen
             onStart={startFromWelcome}
             onReadAgreement={() => openAgreement(true)}
@@ -467,7 +470,7 @@ export default function App() {
             acceptance={acceptance}
           />
         </Shell>
-        {showSplash && <SplashScreen onDone={dismissSplash} />}
+        {showSplash && <SplashScreen onExitStart={startHandoff} onDone={dismissSplash} />}
       </>
     )
   }
@@ -475,7 +478,7 @@ export default function App() {
   if (view === 'agreement') {
     return (
       <>
-        <Shell theme={theme} onToggleTheme={toggle}>
+        <Shell theme={theme} onToggleTheme={toggle} entering={appEntering}>
           <AgreementScreen
             acceptance={acceptance}
             readOnly={readOnlyAgreement}
@@ -483,7 +486,7 @@ export default function App() {
             onBack={() => setView(readOnlyAgreement ? 'app' : 'welcome')}
           />
         </Shell>
-        {showSplash && <SplashScreen onDone={dismissSplash} />}
+        {showSplash && <SplashScreen onExitStart={startHandoff} onDone={dismissSplash} />}
       </>
     )
   }
@@ -495,7 +498,13 @@ export default function App() {
 
   return (
     <>
-      <Shell theme={theme} onToggleTheme={toggle} user={github.user} onSignOut={github.signOut}>
+      <Shell
+        theme={theme}
+        onToggleTheme={toggle}
+        user={github.user}
+        onSignOut={github.signOut}
+        entering={appEntering}
+      >
         <Stepper steps={STEPS} current={currentStep} />
 
       <AuthPanel
@@ -638,7 +647,7 @@ export default function App() {
           </p>
         </footer>
       </Shell>
-      {showSplash && <SplashScreen onDone={dismissSplash} />}
+      {showSplash && <SplashScreen onExitStart={startHandoff} onDone={dismissSplash} />}
     </>
   )
 }
@@ -649,16 +658,19 @@ function Shell({
   onToggleTheme,
   user,
   onSignOut,
+  entering,
   children,
 }: {
   theme: 'dark' | 'light'
   onToggleTheme: () => void
   user?: { login: string; avatar_url: string; name: string | null } | null
   onSignOut?: () => void
+  /** Сайт выезжает из заставки — контент приходит с задержкой и снизу */
+  entering?: boolean
   children: React.ReactNode
 }) {
   return (
-    <div className="app">
+    <div className={`app${entering ? ' is-entering' : ''}`}>
       <div className="background" aria-hidden>
         <div className="glow glow-1" />
         <div className="glow glow-2" />
@@ -667,7 +679,7 @@ function Shell({
 
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark">
+          <span className="brand-mark" data-brand-mark>
             <Logo size={26} />
           </span>
           <span className="brand-text">

@@ -1127,6 +1127,24 @@ p {
 }
 
 
+/* ----------------------- появление сайта из заставки ------------------- */
+
+.app .topbar {
+  transition: opacity 0.5s ease;
+}
+.app .content {
+  transition: opacity 0.6s ease, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1), filter 0.6s ease;
+}
+/* пока заставка уходит, контент ждёт за кадром и выезжает снизу */
+.app.is-entering .topbar {
+  opacity: 0;
+}
+.app.is-entering .content {
+  opacity: 0;
+  transform: translateY(26px) scale(0.975);
+  filter: blur(10px);
+}
+
 /* --------------------------- приветствие ------------------------------ */
 
 .welcome {
@@ -1399,14 +1417,34 @@ p {
   z-index: 100;
   display: grid;
   place-items: center;
-  background: #ffffff;
+  background-color: #ffffff;
   overflow: hidden;
-  transition: opacity 0.42s ease, transform 0.42s ease, visibility 0.42s;
+  transition: background-color 0.62s ease;
 }
+/* уход: белое полотно растворяется, а сайт под ним уже выезжает наверх */
 .splash.is-leaving {
+  background-color: rgba(255, 255, 255, 0);
+  pointer-events: none;
+}
+.splash.is-leaving .splash-scene {
   opacity: 0;
-  visibility: hidden;
-  transform: scale(1.015);
+  transition: opacity 0.4s ease;
+}
+.splash.is-leaving .splash-word,
+.splash.is-leaving .splash-tag,
+.splash.is-leaving .splash-bar {
+  opacity: 0;
+  transform: translateY(-16px);
+  transition: opacity 0.34s ease, transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.splash.is-leaving .splash-halo {
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+/* логотип улетает в шапку сайта — transform назначает скрипт */
+.splash.is-leaving .splash-logo {
+  transition: transform 0.64s cubic-bezier(0.65, 0, 0.2, 1), opacity 0.64s ease;
+  will-change: transform;
 }
 
 .splash-scene {
@@ -1672,6 +1710,28 @@ p {
   }
 }
 
+/* «Уменьшить движение»: сцену не выключаем (иначе её попросту не видно),
+   но делаем её короче и спокойнее. */
+.splash.is-reduced .splash-logo svg {
+  animation: none;
+  opacity: 1;
+}
+.splash.is-reduced .splash-stroke {
+  stroke-dashoffset: 0;
+  animation-duration: 0.01ms;
+}
+.splash.is-reduced .splash-halo {
+  opacity: 0.35;
+  animation: none;
+}
+.splash.is-reduced .splash-letter {
+  animation-duration: 0.3s;
+  animation-delay: 0.02s;
+}
+.splash.is-reduced .splash-bar i {
+  animation-duration: 1.4s;
+}
+
 /* Заставка всегда светлая: если у пользователя тёмная тема, делаем её
    чуть прохладной, но по-прежнему белой. */
 :root[data-theme='dark'] .splash {
@@ -1727,15 +1787,14 @@ p {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  * {
+  /* анимации интерфейса гасим, но сцену заставки оставляем управляемой из скрипта */
+  *:not(.splash, .splash *) {
     animation-duration: 0.01ms !important;
     animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
   }
-  .splash-stroke {
-    stroke-dashoffset: 0;
-  }
-  .splash-bar i {
+  .app.is-entering .content {
     transform: none;
+    filter: none;
   }
 }

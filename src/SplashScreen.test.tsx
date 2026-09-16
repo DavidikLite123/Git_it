@@ -26,12 +26,40 @@ describe('стартовая заставка', () => {
     // под заставкой уже отрисован готовый экран — после неё нет «пустого» кадра
     expect(screen.getByRole('button', { name: 'Начать' })).toBeTruthy()
 
+    // во время игры сайт стоит за кадром: контент ещё не выехал
+    expect(document.querySelector('.app.is-entering')).toBeTruthy()
+
     act(() => {
       vi.advanceTimersByTime(4000)
     })
 
     expect(document.querySelector('.splash')).toBeNull()
+    // после ухода заставки сайт на месте и больше не «входящий»
+    expect(document.querySelector('.app.is-entering')).toBeNull()
     expect(screen.getByText('Как это работает')).toBeTruthy()
+  })
+
+  it('при уходе заставки логотип летит в шапку, а сайт выезжает из-под неё', () => {
+    render(<App />)
+
+    const logo = document.querySelector('.splash-logo')!
+    const brand = document.querySelector('[data-brand-mark]')!
+    expect(logo).toBeTruthy()
+    expect(brand).toBeTruthy()
+
+    act(() => {
+      vi.advanceTimersByTime(3100)
+    })
+
+    // логотип исчезает в направлении шапки, а не просто пропадает
+    expect(document.querySelector('.splash')!.className).toContain('is-leaving')
+    // шапка с местом приземления логотипа уже отрисована
+    expect(document.querySelector('[data-brand-mark]')).toBeTruthy()
+
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    expect(document.querySelector('.splash')).toBeNull()
   })
 
   it('показывает логотип, надпись Git it и слоган ровно под словом «it»', () => {
@@ -78,7 +106,7 @@ describe('стартовая заставка', () => {
       fireEvent.pointerDown(document.querySelector('.splash') as HTMLElement)
     })
     act(() => {
-      vi.advanceTimersByTime(600)
+      vi.advanceTimersByTime(1200)
     })
 
     expect(document.querySelector('.splash')).toBeNull()
@@ -102,7 +130,8 @@ describe('стартовая заставка', () => {
 
   it('сообщает о себе вспомогательным технологиям и убирается ровно один раз', () => {
     const onDone = vi.fn()
-    const { unmount } = render(<SplashScreen duration={1000} onDone={onDone} />)
+    const onExitStart = vi.fn()
+    const { unmount } = render(<SplashScreen duration={1000} onExitStart={onExitStart} onDone={onDone} />)
 
     expect(screen.getByRole('status', { name: /Открываем Git it/i })).toBeTruthy()
 
@@ -113,6 +142,7 @@ describe('стартовая заставка', () => {
     })
 
     expect(onDone).toHaveBeenCalledTimes(1)
+    expect(onExitStart).toHaveBeenCalledTimes(1)
     unmount()
   })
 })
