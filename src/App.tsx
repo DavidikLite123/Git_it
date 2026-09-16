@@ -423,6 +423,7 @@ export default function App() {
           status={github.status}
           user={github.user}
           error={github.error}
+          hasSavedToken={Boolean(github.token)}
           onSignIn={github.signIn}
           onSignOut={github.signOut}
         />

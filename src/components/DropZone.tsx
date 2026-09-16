@@ -8,7 +8,6 @@ interface Props {
   busy: boolean
   progressText: string | null
   error: string | null
-  compact?: boolean
 }
 
 function kindOf(entry: FileSystemEntry): 'folder' | 'zip' | 'files' {
@@ -17,7 +16,7 @@ function kindOf(entry: FileSystemEntry): 'folder' | 'zip' | 'files' {
   return 'files'
 }
 
-export function DropZone({ onDropEntries, onFiles, busy, progressText, error, compact }: Props) {
+export function DropZone({ onDropEntries, onFiles, busy, progressText, error }: Props) {
   const [over, setOver] = useState(false)
   const folderInput = useRef<HTMLInputElement>(null)
   const zipInput = useRef<HTMLInputElement>(null)
@@ -53,7 +52,8 @@ export function DropZone({ onDropEntries, onFiles, busy, progressText, error, co
   )
 
   return (
-    <div className={`dropzone-wrap${compact ? ' compact' : ''}`}>
+    <div className="dropzone-wrap">
+      {/* область целиком реагирует на клик, но управление — за кнопками внутри */}
       <div
         className={`dropzone${over ? ' is-over' : ''}${busy ? ' is-busy' : ''}`}
         onDragOver={handleDragOver}
@@ -61,14 +61,6 @@ export function DropZone({ onDropEntries, onFiles, busy, progressText, error, co
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={() => !busy && folderInput.current?.click()}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault()
-            folderInput.current?.click()
-          }
-        }}
       >
         <div className="dropzone-glow" aria-hidden />
         {busy ? (

@@ -144,6 +144,7 @@ export function RepoPicker({
             <div className="segmented segmented-sm">
               <button
                 type="button"
+                aria-pressed={draft.private}
                 className={draft.private ? 'is-active' : ''}
                 onClick={() => onDraftChange({ private: true })}
               >
@@ -151,6 +152,7 @@ export function RepoPicker({
               </button>
               <button
                 type="button"
+                aria-pressed={!draft.private}
                 className={!draft.private ? 'is-active' : ''}
                 onClick={() => onDraftChange({ private: false })}
               >

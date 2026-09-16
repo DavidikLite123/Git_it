@@ -7,16 +7,32 @@ interface Props {
   status: AuthStatus
   user: GitHubUser | null
   error: string | null
+  /** Токен уже лежит в браузере — показываем проверку вместо формы */
+  hasSavedToken: boolean
   onSignIn: (token: string) => Promise<void>
   onSignOut: () => void
 }
 
 const TOKEN_URL = 'https://github.com/settings/tokens/new?scopes=repo,workflow&description=Git%20it'
 
-export function AuthPanel({ status, user, error, onSignIn, onSignOut }: Props) {
+export function AuthPanel({ status, user, error, hasSavedToken, onSignIn, onSignOut }: Props) {
   const [token, setToken] = useState('')
   const [reveal, setReveal] = useState(false)
   const [busy, setBusy] = useState(false)
+
+  if (status === 'checking' && !user) {
+    return (
+      <section className="card account-card">
+        <div className="account">
+          <Spinner size={22} />
+          <div className="account-info">
+            <span className="account-name">{hasSavedToken ? 'Проверяем сохранённый токен…' : 'Подключаемся к GitHub…'}</span>
+            <span className="muted small">Обращаемся к api.github.com от вашего имени</span>
+          </div>
+        </div>
+      </section>
+    )
+  }
 
   if (user && status === 'ready') {
     return (

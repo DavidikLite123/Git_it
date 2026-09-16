@@ -946,6 +946,16 @@ p {
 
 /* ---------------------------- проект ---------------------------------- */
 
+.project-card {
+  border-color: color-mix(in oklab, var(--accent) 26%, var(--border));
+}
+.file-card .card-head h2 svg {
+  color: var(--accent-2);
+}
+.progress-card .card-head h2 svg {
+  color: var(--accent);
+}
+
 .project-head {
   display: flex;
   align-items: flex-start;
