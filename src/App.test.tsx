@@ -177,8 +177,10 @@ describe('первый запуск: приветствие и соглашен�
     expect(body).toContain('Как себя обезопасить')
     expect(body).toContain('fine-grained')
     expect(body).toContain('git-it-five.vercel.app')
-    // и подсказка, как проверить сайт самому
+    // подтверждение безопасности — фактический отчёт проверки, а не обещание
     expect(body).toContain('VirusTotal')
+    expect(body).toContain('0/90 обнаружений')
+    expect(body).toContain('Отчёт проверки в VirusTotal')
   })
 
   it('показывает экран «о проекте» и не пускает дальше без согласия', () => {

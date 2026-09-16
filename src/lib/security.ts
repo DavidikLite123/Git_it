@@ -20,8 +20,17 @@ export const FINE_GRAINED_TOKEN_URL = 'https://github.com/settings/personal-acce
 export const REVOKE_TOKENS_URL = 'https://github.com/settings/tokens'
 
 /**
- * Страница проверки адресов в VirusTotal. Мы сознательно не утверждаем,
- * что сайт «уже проверен»: пользователь в любой момент может проверить
- * официальный адрес сам — ссылка ведёт прямо на сканер.
+ * Страница проверки адресов в VirusTotal — по ней пользователь может
+ * перепроверить официальный сайт в любой момент.
  */
 export const VIRUSTOTAL_URL = 'https://www.virustotal.com/gui/home/url'
+
+/**
+ * Отчёт VirusTotal об официальном сайте. Фактическая проверка выполнена
+ * 16 сентября 2026: ни один вендор не пометил сайт как вредоносный.
+ */
+export const VIRUSTOTAL_REPORT_URL =
+  'https://www.virustotal.com/gui/url/be612e538b4971fc25cb4a9d5c60869693f967231543091e28a4353782858051'
+
+/** Итог проверки — для бейджа доверия. */
+export const VIRUSTOTAL_CHECK = { checkedAt: '16 сентября 2026', detections: '0/90' }

@@ -1,5 +1,5 @@
 import { Alert, Check, ExternalLink, GitHubMark, Shield } from './Icons'
-import { OFFICIAL_DOMAIN, REPO_URL, VIRUSTOTAL_URL } from '../lib/security'
+import { OFFICIAL_DOMAIN, REPO_URL, VIRUSTOTAL_CHECK, VIRUSTOTAL_REPORT_URL } from '../lib/security'
 
 /** Риски, о которых честно предупреждаем до входа токена. */
 const RISKS: string[] = [
@@ -66,15 +66,22 @@ export function SecurityNote() {
             <strong>Почему нам можно доверять.</strong> У Git it нет серверной части и скрытых запросов: токен
             хранится только в вашем браузере и отправляется исключительно на <code>api.github.com</code> по HTTPS, а
             файлы уходят прямо в GitHub. Исходный код полностью открыт (лицензия MIT) — его может прочитать и
-            проверить каждый. А официальный сайт <code>{OFFICIAL_DOMAIN}</code> вы в любой момент можете проверить в
-            VirusTotal или любом другом антивирусном сканере.
+            проверить каждый.
+          </span>
+          <span className="vt-badge">
+            <Check size={16} />
+            <span>
+              Официальный сайт <code>{OFFICIAL_DOMAIN}</code> проверен в VirusTotal {VIRUSTOTAL_CHECK.checkedAt}:{' '}
+              <strong>{VIRUSTOTAL_CHECK.detections} обнаружений</strong> — ни один из 90 антивирусных вендоров не
+              пометил сайт как вредоносный (включая Google Safe Browsing и Kaspersky).
+            </span>
           </span>
           <span className="trust-links">
             <a href={REPO_URL} target="_blank" rel="noreferrer">
               <GitHubMark size={14} /> Исходный код открыт
             </a>
-            <a href={VIRUSTOTAL_URL} target="_blank" rel="noreferrer">
-              <ExternalLink size={14} /> Проверить сайт в VirusTotal
+            <a href={VIRUSTOTAL_REPORT_URL} target="_blank" rel="noreferrer">
+              <ExternalLink size={14} /> Отчёт проверки в VirusTotal ({VIRUSTOTAL_CHECK.detections})
             </a>
           </span>
         </div>
