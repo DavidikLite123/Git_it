@@ -166,6 +166,23 @@ describe('сайт показывается сразу', () => {
 })
 
 describe('первый запуск: приветствие и соглашение', () => {
+  it('на приветственном экране видны риски и рекомендации по безопасности', () => {
+    render(<App />)
+
+    // блок «Риски и рекомендации» виден сразу, до входа в приложение
+    expect(screen.getByText(/Безопасность: риски и рекомендации/)).toBeTruthy()
+    const body = document.body.textContent!
+    // обе части сводки: и риски, и как себя обезопасить
+    expect(body).toContain('О чём важно помнить')
+    expect(body).toContain('Как себя обезопасить')
+    expect(body).toContain('fine-grained')
+    expect(body).toContain('git-it-five.vercel.app')
+    // подтверждение безопасности — фактический отчёт проверки, а не обещание
+    expect(body).toContain('VirusTotal')
+    expect(body).toContain('0/90 обнаружений')
+    expect(body).toContain('Отчёт проверки в VirusTotal')
+  })
+
   it('показывает экран «о проекте» и не пускает дальше без согласия', () => {
     render(<App />)
 

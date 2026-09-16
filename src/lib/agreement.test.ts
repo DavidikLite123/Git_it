@@ -30,6 +30,17 @@ describe('лицензионное соглашение', () => {
     expect(text).toMatch(/токен/i)
   })
 
+  it('честно предупреждает о рисках и даёт рекомендации по токену', () => {
+    const text = AGREEMENT_SECTIONS.flatMap((section) => [section.title, ...section.paragraphs]).join(' ')
+    // риски названы своими именами
+    expect(text).toMatch(/риски, о которых важно помнить/i)
+    expect(text).toContain('git-it-five.vercel.app')
+    // и рядом с ними — конкретные рекомендации
+    expect(text).toContain('fine-grained')
+    expect(text).toMatch(/отзовите токен в настройках GitHub/i)
+    expect(text).toMatch(/минимальными правами/i)
+  })
+
   it('AGREEMENT.md в репозитории совпадает с текстом в приложении', async () => {
     const expected = agreementAsMarkdown()
     let actual: string
