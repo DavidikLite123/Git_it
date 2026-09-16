@@ -6,6 +6,7 @@ import { FileTree } from './components/FileTree'
 import { PublishPanel } from './components/PublishPanel'
 import { ProgressPanel } from './components/ProgressPanel'
 import { RepoPicker, type NewRepoDraft, type RepoMode } from './components/RepoPicker'
+import { SplashScreen } from './components/SplashScreen'
 import { Stepper } from './components/Stepper'
 import { WelcomeScreen } from './components/WelcomeScreen'
 import { Alert, Book, GitHubMark, Info, Logo, Moon, Refresh, Sun, Trash } from './components/Icons'
@@ -69,6 +70,8 @@ export default function App() {
   // приветственный экран показывается при каждом заходе на сайт
   const [view, setView] = useState<View>('welcome')
   const [readOnlyAgreement, setReadOnlyAgreement] = useState(false)
+  // стартовая заставка: показывается при каждом заходе на сайт
+  const [showSplash, setShowSplash] = useState(true)
 
   const agreementAccepted = acceptance?.version === AGREEMENT_VERSION
 
@@ -447,33 +450,41 @@ export default function App() {
     setView('agreement')
   }, [])
 
+  const dismissSplash = useCallback(() => setShowSplash(false), [])
+
   openAgreementRef.current = openAgreement
 
   /* --------------------------------- рендер -------------------------------- */
 
   if (view === 'welcome') {
     return (
-      <Shell theme={theme} onToggleTheme={toggle}>
-        <WelcomeScreen
-          onStart={startFromWelcome}
-          onReadAgreement={() => openAgreement(true)}
-          agreementAccepted={agreementAccepted}
-          acceptance={acceptance}
-        />
-      </Shell>
+      <>
+        <Shell theme={theme} onToggleTheme={toggle}>
+          <WelcomeScreen
+            onStart={startFromWelcome}
+            onReadAgreement={() => openAgreement(true)}
+            agreementAccepted={agreementAccepted}
+            acceptance={acceptance}
+          />
+        </Shell>
+        {showSplash && <SplashScreen onDone={dismissSplash} />}
+      </>
     )
   }
 
   if (view === 'agreement') {
     return (
-      <Shell theme={theme} onToggleTheme={toggle}>
-        <AgreementScreen
-          acceptance={acceptance}
-          readOnly={readOnlyAgreement}
-          onAccept={acceptAgreement}
-          onBack={() => setView(readOnlyAgreement ? 'app' : 'welcome')}
-        />
-      </Shell>
+      <>
+        <Shell theme={theme} onToggleTheme={toggle}>
+          <AgreementScreen
+            acceptance={acceptance}
+            readOnly={readOnlyAgreement}
+            onAccept={acceptAgreement}
+            onBack={() => setView(readOnlyAgreement ? 'app' : 'welcome')}
+          />
+        </Shell>
+        {showSplash && <SplashScreen onDone={dismissSplash} />}
+      </>
     )
   }
 
@@ -483,8 +494,9 @@ export default function App() {
   const busyConfig = publish.status === 'running'
 
   return (
-    <Shell theme={theme} onToggleTheme={toggle} user={github.user} onSignOut={github.signOut}>
-      <Stepper steps={STEPS} current={currentStep} />
+    <>
+      <Shell theme={theme} onToggleTheme={toggle} user={github.user} onSignOut={github.signOut}>
+        <Stepper steps={STEPS} current={currentStep} />
 
       <AuthPanel
         status={github.status}
@@ -613,19 +625,21 @@ export default function App() {
         <ProgressPanel state={publish} onCancel={publish.cancel} onRetry={() => void startPublish()} onRestart={restart} />
       )}
 
-      <footer className="footer">
-        <p className="muted small">
-          <GitHubMark size={16} /> Git it · работает целиком в браузере: обращения идут напрямую к api.github.com, у
-          приложения нет своего сервера.
-        </p>
-        <p className="muted small">
-          <button type="button" className="link-btn" onClick={() => openAgreement(true)}>
-            <Book size={14} /> Лицензионное соглашение {formatAgreementVersion()}
-          </button>
-          {acceptance && <span className="muted small">· принято {formatAcceptanceDate(acceptance.acceptedAt)}</span>}
-        </p>
-      </footer>
-    </Shell>
+        <footer className="footer">
+          <p className="muted small">
+            <GitHubMark size={16} /> Git it · работает целиком в браузере: обращения идут напрямую к api.github.com, у
+            приложения нет своего сервера.
+          </p>
+          <p className="muted small">
+            <button type="button" className="link-btn" onClick={() => openAgreement(true)}>
+              <Book size={14} /> Лицензионное соглашение {formatAgreementVersion()}
+            </button>
+            {acceptance && <span className="muted small">· принято {formatAcceptanceDate(acceptance.acceptedAt)}</span>}
+          </p>
+        </footer>
+      </Shell>
+      {showSplash && <SplashScreen onDone={dismissSplash} />}
+    </>
   )
 }
 
