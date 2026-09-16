@@ -1,0 +1,26 @@
+# зависимости
+node_modules/
+
+# сборка
+dist/
+dist-ssr/
+*.local
+
+# кэш инструментов
+.vite/
+coverage/
+*.tsbuildinfo
+
+# редакторы и ОС
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# логи
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
