@@ -124,6 +124,13 @@ export const Lock = ({ size = 18, ...rest }: IconProps) => (
   </svg>
 )
 
+export const Shield = ({ size = 18, ...rest }: IconProps) => (
+  <svg {...base({ size, ...rest })}>
+    <path d="M12 3 5 5.8v5.4c0 4.3 2.9 7.4 7 9.3 4.1-1.9 7-5 7-9.3V5.8Z" />
+    <path d="m9.2 11.8 2 2 3.6-3.8" />
+  </svg>
+)
+
 export const Globe = ({ size = 18, ...rest }: IconProps) => (
   <svg {...base({ size, ...rest })}>
     <circle cx="12" cy="12" r="9" />

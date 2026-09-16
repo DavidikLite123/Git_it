@@ -530,6 +530,75 @@ p {
   color: var(--text-dim);
 }
 
+/* --------------------------- риски и рекомендации --------------------- */
+
+.security-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.security-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.security-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.95rem;
+}
+.security-title-risk {
+  color: color-mix(in oklab, var(--warn) 82%, var(--text));
+}
+.security-title-ok {
+  color: color-mix(in oklab, var(--accent-2) 82%, var(--text));
+}
+
+.security-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0 0 0 1.05rem;
+  color: var(--text-dim);
+  font-size: 0.88rem;
+}
+.security-list li::marker {
+  color: var(--border-strong);
+}
+
+.trust-note {
+  align-items: flex-start;
+}
+.trust-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.trust-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.1rem;
+  font-size: 0.85rem;
+}
+.trust-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.token-warning a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 /* ------------------------------- dropzone ---------------------------- */
 
 .dropzone-wrap {

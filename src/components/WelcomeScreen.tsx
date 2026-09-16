@@ -1,4 +1,5 @@
 import { Check, ExternalLink, GitHubMark, Lock, Logo, Rocket, UploadCloud, Zap } from './Icons'
+import { SecurityNote } from './SecurityNote'
 import {
   AGREEMENT_UPDATED_AT,
   AGREEMENT_URL,
@@ -106,6 +107,8 @@ export function WelcomeScreen({ onStart, onReadAgreement, agreementAccepted, acc
           ))}
         </ol>
       </section>
+
+      <SecurityNote />
 
       <section className="card welcome-start">
         <div>
