@@ -6,7 +6,6 @@ import { FileTree } from './components/FileTree'
 import { PublishPanel } from './components/PublishPanel'
 import { ProgressPanel } from './components/ProgressPanel'
 import { RepoPicker, type NewRepoDraft, type RepoMode } from './components/RepoPicker'
-import { SplashScreen } from './components/SplashScreen'
 import { Stepper } from './components/Stepper'
 import { WelcomeScreen } from './components/WelcomeScreen'
 import { Alert, Book, GitHubMark, Info, Logo, Moon, Refresh, Sun, Trash } from './components/Icons'
@@ -70,10 +69,6 @@ export default function App() {
   // приветственный экран показывается при каждом заходе на сайт
   const [view, setView] = useState<View>('welcome')
   const [readOnlyAgreement, setReadOnlyAgreement] = useState(false)
-  // заставка: play → handoff (логотип летит в шапку, сайт выезжает) → ready
-  const [stage, setStage] = useState<'play' | 'handoff' | 'ready'>('play')
-  const showSplash = stage !== 'ready'
-  const appEntering = stage !== 'ready'
 
   const agreementAccepted = acceptance?.version === AGREEMENT_VERSION
 
@@ -452,9 +447,6 @@ export default function App() {
     setView('agreement')
   }, [])
 
-  const startHandoff = useCallback(() => setStage('handoff'), [])
-  const dismissSplash = useCallback(() => setStage('ready'), [])
-
   openAgreementRef.current = openAgreement
 
   /* --------------------------------- рендер -------------------------------- */
@@ -462,7 +454,7 @@ export default function App() {
   if (view === 'welcome') {
     return (
       <>
-        <Shell theme={theme} onToggleTheme={toggle} entering={appEntering}>
+        <Shell theme={theme} onToggleTheme={toggle}>
           <WelcomeScreen
             onStart={startFromWelcome}
             onReadAgreement={() => openAgreement(true)}
@@ -470,7 +462,6 @@ export default function App() {
             acceptance={acceptance}
           />
         </Shell>
-        {showSplash && <SplashScreen onExitStart={startHandoff} onDone={dismissSplash} />}
       </>
     )
   }
@@ -478,7 +469,7 @@ export default function App() {
   if (view === 'agreement') {
     return (
       <>
-        <Shell theme={theme} onToggleTheme={toggle} entering={appEntering}>
+        <Shell theme={theme} onToggleTheme={toggle}>
           <AgreementScreen
             acceptance={acceptance}
             readOnly={readOnlyAgreement}
@@ -486,7 +477,6 @@ export default function App() {
             onBack={() => setView(readOnlyAgreement ? 'app' : 'welcome')}
           />
         </Shell>
-        {showSplash && <SplashScreen onExitStart={startHandoff} onDone={dismissSplash} />}
       </>
     )
   }
@@ -498,13 +488,7 @@ export default function App() {
 
   return (
     <>
-      <Shell
-        theme={theme}
-        onToggleTheme={toggle}
-        user={github.user}
-        onSignOut={github.signOut}
-        entering={appEntering}
-      >
+      <Shell theme={theme} onToggleTheme={toggle} user={github.user} onSignOut={github.signOut}>
         <Stepper steps={STEPS} current={currentStep} />
 
       <AuthPanel
@@ -647,7 +631,6 @@ export default function App() {
           </p>
         </footer>
       </Shell>
-      {showSplash && <SplashScreen onExitStart={startHandoff} onDone={dismissSplash} />}
     </>
   )
 }
@@ -658,19 +641,16 @@ function Shell({
   onToggleTheme,
   user,
   onSignOut,
-  entering,
   children,
 }: {
   theme: 'dark' | 'light'
   onToggleTheme: () => void
   user?: { login: string; avatar_url: string; name: string | null } | null
   onSignOut?: () => void
-  /** Сайт выезжает из заставки — контент приходит с задержкой и снизу */
-  entering?: boolean
   children: React.ReactNode
 }) {
   return (
-    <div className={`app${entering ? ' is-entering' : ''}`}>
+    <div className="app">
       <div className="background" aria-hidden>
         <div className="glow glow-1" />
         <div className="glow glow-2" />
@@ -679,7 +659,7 @@ function Shell({
 
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark" data-brand-mark>
+          <span className="brand-mark">
             <Logo size={26} />
           </span>
           <span className="brand-text">

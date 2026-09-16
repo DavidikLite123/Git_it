@@ -139,6 +139,32 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('сайт показывается сразу', () => {
+  it('не закрывает страницу полноэкранной заглушкой: контент виден с первого кадра', () => {
+    render(<App />)
+
+    // приветствие отрисовано сразу, без ожидания таймеров
+    expect(screen.getByText('Как это работает')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Начать' })).toBeTruthy()
+
+    // никаких оверлеев на весь экран и «входящих» состояний, которые прячут сайт
+    expect(document.querySelector('[class*="splash"]')).toBeNull()
+    expect(document.querySelector('.overlay, .loader, .preloader')).toBeNull()
+    expect(document.querySelector('.app.is-entering')).toBeNull()
+
+    const app = document.querySelector('.app')!
+    expect(app.className.trim()).toBe('app')
+  })
+
+  it('шапка с логотипом видна сразу и на ней нет заглушек', () => {
+    render(<App />)
+    const brand = document.querySelector('.brand-mark')!
+    expect(brand.querySelector('svg')).toBeTruthy()
+    expect(document.querySelector('.app')!.getAttribute('data-brand-mark')).toBeNull()
+    expect(document.querySelector('[data-brand-mark]')).toBeNull()
+  })
+})
+
 describe('первый запуск: приветствие и соглашение', () => {
   it('показывает экран «о проекте» и не пускает дальше без согласия', () => {
     render(<App />)

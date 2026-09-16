@@ -1127,22 +1127,74 @@ p {
 }
 
 
-/* ----------------------- появление сайта из заставки ------------------- */
+/* ------------------ мягкое появление интерфейса ----------------------- */
+/* Никаких полноэкранных заглушек: контент виден сразу, анимация только
+   добавляет движение. При «уменьшить движение» всё появляется мгновенно. */
 
-.app .topbar {
-  transition: opacity 0.5s ease;
+.brand-mark {
+  animation: brandPop 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-.app .content {
-  transition: opacity 0.6s ease, transform 0.7s cubic-bezier(0.16, 1, 0.3, 1), filter 0.6s ease;
+.brand-text {
+  animation: fadeUp 0.55s 0.06s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-/* пока заставка уходит, контент ждёт за кадром и выезжает снизу */
-.app.is-entering .topbar {
-  opacity: 0;
+
+.welcome > * {
+  animation: fadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-.app.is-entering .content {
-  opacity: 0;
-  transform: translateY(26px) scale(0.975);
-  filter: blur(10px);
+.welcome > *:nth-child(1) {
+  animation-delay: 0.04s;
+}
+.welcome > *:nth-child(2) {
+  animation-delay: 0.1s;
+}
+.welcome > *:nth-child(3) {
+  animation-delay: 0.16s;
+}
+.welcome > *:nth-child(4) {
+  animation-delay: 0.22s;
+}
+.welcome > *:nth-child(5) {
+  animation-delay: 0.28s;
+}
+.welcome > *:nth-child(6) {
+  animation-delay: 0.34s;
+}
+
+.grid-cards .mini-card {
+  animation: fadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.grid-cards .mini-card:nth-child(1) {
+  animation-delay: 0.12s;
+}
+.grid-cards .mini-card:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.grid-cards .mini-card:nth-child(3) {
+  animation-delay: 0.24s;
+}
+.grid-cards .mini-card:nth-child(4) {
+  animation-delay: 0.3s;
+}
+
+@keyframes brandPop {
+  from {
+    opacity: 0;
+    transform: scale(0.72) rotate(-8deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* --------------------------- приветствие ------------------------------ */
@@ -1407,354 +1459,6 @@ p {
 }
 
 
-/* ========================= стартовая заставка ========================= */
-/* Белый экран → из пустоты прорисовывается логотип → выезжает надпись
-   Git it → под словом «it» побуквенно появляется слоган. */
-
-.splash {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: grid;
-  place-items: center;
-  background-color: #ffffff;
-  overflow: hidden;
-  transition: background-color 0.62s ease;
-}
-/* уход: белое полотно растворяется, а сайт под ним уже выезжает наверх */
-.splash.is-leaving {
-  background-color: rgba(255, 255, 255, 0);
-  pointer-events: none;
-}
-.splash.is-leaving .splash-scene {
-  opacity: 0;
-  transition: opacity 0.4s ease;
-}
-.splash.is-leaving .splash-word,
-.splash.is-leaving .splash-tag,
-.splash.is-leaving .splash-bar {
-  opacity: 0;
-  transform: translateY(-16px);
-  transition: opacity 0.34s ease, transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.splash.is-leaving .splash-halo {
-  opacity: 0;
-  transition: opacity 0.35s ease;
-}
-/* логотип улетает в шапку сайта — transform назначает скрипт */
-.splash.is-leaving .splash-logo {
-  transition: transform 0.64s cubic-bezier(0.65, 0, 0.2, 1), opacity 0.64s ease;
-  will-change: transform;
-}
-
-.splash-scene {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-.splash-blob {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(70px);
-}
-.blob-a {
-  width: 34rem;
-  height: 34rem;
-  left: 50%;
-  top: 42%;
-  margin: -17rem 0 0 -17rem;
-  background: radial-gradient(circle, rgba(124, 92, 255, 0.26), transparent 66%);
-  animation: splashBlobA 7s ease-in-out infinite;
-}
-.blob-b {
-  width: 26rem;
-  height: 26rem;
-  left: 58%;
-  top: 58%;
-  margin: -13rem 0 0 -13rem;
-  background: radial-gradient(circle, rgba(35, 211, 160, 0.22), transparent 66%);
-  animation: splashBlobB 9s ease-in-out infinite;
-}
-/* лёгкая вуаль по краям — экран выглядит «дороже», чем просто белый */
-.splash-vignette {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at 50% 46%, rgba(255, 255, 255, 0) 38%, rgba(248, 249, 255, 0.9) 100%);
-}
-
-.splash-inner {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 1rem;
-}
-
-/* ------------------------------- логотип ------------------------------ */
-
-.splash-logo {
-  position: relative;
-  width: 88px;
-  height: 88px;
-  display: grid;
-  place-items: center;
-  animation: splashLogoRise 0.95s 0.1s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-.splash-logo svg {
-  position: relative;
-  width: 78px;
-  height: 78px;
-}
-.splash-stroke {
-  stroke: url(#splash-gradient);
-  stroke-width: 4.6;
-  stroke-dasharray: 150;
-  stroke-dashoffset: 150;
-  animation: splashDraw 0.85s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
-.stroke-branch {
-  animation-delay: 0.2s;
-}
-.stroke-plus {
-  animation-delay: 0.66s;
-}
-.stroke-dot {
-  animation-delay: 0.9s;
-}
-.splash-halo {
-  position: absolute;
-  inset: -14px;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(124, 92, 255, 0.28), transparent 68%);
-  animation: splashHalo 1.7s 0.35s ease-out both;
-}
-
-/* ------------------------------- надпись ------------------------------- */
-
-/* ширина ровно по надписи: слоган внутри позиционируется от её правого края */
-.splash-lockup {
-  position: relative;
-  width: max-content;
-}
-
-.splash-word {
-  display: flex;
-  align-items: baseline;
-  font-size: clamp(2.5rem, 1.6rem + 4vw, 3.6rem);
-  font-weight: 700;
-  letter-spacing: -0.035em;
-  line-height: 1.05;
-  margin-top: 0.55rem;
-  animation: splashWordSlide 0.8s 0.75s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-.splash-word-main {
-  display: inline-flex;
-  color: #0c1226;
-}
-.splash-word-accent {
-  display: inline-flex;
-  background: linear-gradient(120deg, #7c5cff, #23d3a0);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-.splash-letter {
-  display: inline-block;
-  animation: splashLetter 0.62s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-/* -------------------------------- слоган ------------------------------- */
-
-/* абсолютное позиционирование, чтобы слоган не расширял надпись:
-   он растёт влево, а его правый край совпадает с правым краем слова «it» */
-.splash-tag {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 0.5rem);
-  margin: 0;
-  text-align: right;
-  font-size: clamp(0.78rem, 0.68rem + 0.45vw, 0.95rem);
-  font-weight: 500;
-  letter-spacing: 0.005em;
-  color: #6b7690;
-  white-space: nowrap;
-}
-.splash-tag .splash-letter {
-  animation-name: splashTagLetter;
-  animation-duration: 0.5s;
-}
-
-/* полоска загрузки под слоганом (слоган позиционирован абсолютно,
-   поэтому отступ считаем вручную, чтобы ничего не перекрывалось) */
-.splash-bar {
-  display: block;
-  width: clamp(150px, 42vw, 210px);
-  height: 3px;
-  margin-top: 3.1rem;
-  border-radius: 999px;
-  background: rgba(12, 18, 38, 0.08);
-  overflow: hidden;
-  animation: splashFadeIn 0.6s 0.5s ease both;
-}
-.splash-bar i {
-  display: block;
-  height: 100%;
-  width: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, #7c5cff, #23d3a0);
-  transform-origin: left center;
-  animation: splashBar 2.3s 0.45s cubic-bezier(0.35, 0.1, 0.2, 1) both;
-}
-
-/* ------------------------------ анимации ------------------------------ */
-
-@keyframes splashLogoRise {
-  from {
-    opacity: 0;
-    transform: scale(0.5) translateY(18px);
-    filter: blur(14px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-    filter: blur(0);
-  }
-}
-@keyframes splashDraw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-@keyframes splashHalo {
-  from {
-    opacity: 0;
-    transform: scale(0.4);
-  }
-  45% {
-    opacity: 0.85;
-  }
-  to {
-    opacity: 0.3;
-    transform: scale(1.3);
-  }
-}
-@keyframes splashWordSlide {
-  from {
-    opacity: 0;
-    transform: translateX(-52px);
-    filter: blur(8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-    filter: blur(0);
-  }
-}
-@keyframes splashLetter {
-  from {
-    opacity: 0;
-    transform: translateY(16px) scale(0.88);
-    filter: blur(7px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-    filter: blur(0);
-  }
-}
-@keyframes splashTagLetter {
-  from {
-    opacity: 0;
-    transform: translateY(7px);
-    filter: blur(4px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-    filter: blur(0);
-  }
-}
-@keyframes splashFadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@keyframes splashBar {
-  from {
-    transform: scaleX(0);
-  }
-  to {
-    transform: scaleX(1);
-  }
-}
-@keyframes splashBlobA {
-  0%,
-  100% {
-    transform: translate3d(-3%, 1%, 0) scale(1);
-  }
-  50% {
-    transform: translate3d(3%, -2%, 0) scale(1.12);
-  }
-}
-@keyframes splashBlobB {
-  0%,
-  100% {
-    transform: translate3d(2%, 2%, 0) scale(1.05);
-  }
-  50% {
-    transform: translate3d(-4%, -3%, 0) scale(1);
-  }
-}
-
-/* «Уменьшить движение»: сцену не выключаем (иначе её попросту не видно),
-   но делаем её короче и спокойнее. */
-.splash.is-reduced .splash-logo svg {
-  animation: none;
-  opacity: 1;
-}
-.splash.is-reduced .splash-stroke {
-  stroke-dashoffset: 0;
-  animation-duration: 0.01ms;
-}
-.splash.is-reduced .splash-halo {
-  opacity: 0.35;
-  animation: none;
-}
-.splash.is-reduced .splash-letter {
-  animation-duration: 0.3s;
-  animation-delay: 0.02s;
-}
-.splash.is-reduced .splash-bar i {
-  animation-duration: 1.4s;
-}
-
-/* Заставка всегда светлая: если у пользователя тёмная тема, делаем её
-   чуть прохладной, но по-прежнему белой. */
-:root[data-theme='dark'] .splash {
-  background: #ffffff;
-}
-:root[data-theme='dark'] .splash-vignette {
-  background: radial-gradient(circle at 50% 46%, rgba(255, 255, 255, 0) 34%, rgba(244, 246, 255, 0.94) 100%);
-}
-
-@media (max-width: 640px) {
-  .splash-logo {
-    width: 74px;
-    height: 74px;
-  }
-  .splash-logo svg {
-    width: 64px;
-    height: 64px;
-  }
-  .splash-tag {
-    font-size: 0.78rem;
-  }
-}
-
 /* --------------------------- адаптивность ---------------------------- */
 
 @media (max-width: 640px) {
@@ -1787,14 +1491,10 @@ p {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* анимации интерфейса гасим, но сцену заставки оставляем управляемой из скрипта */
-  *:not(.splash, .splash *) {
+  /* анимации гасим — элементы сразу в конечном, видимом состоянии */
+  * {
     animation-duration: 0.01ms !important;
     animation-delay: 0ms !important;
     transition-duration: 0.01ms !important;
-  }
-  .app.is-entering .content {
-    transform: none;
-    filter: none;
   }
 }
