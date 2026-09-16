@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AgreementScreen } from './components/AgreementScreen'
 import { AuthPanel } from './components/AuthPanel'
 import { DropZone } from './components/DropZone'
 import { FileTree } from './components/FileTree'
@@ -6,11 +7,19 @@ import { PublishPanel } from './components/PublishPanel'
 import { ProgressPanel } from './components/ProgressPanel'
 import { RepoPicker, type NewRepoDraft, type RepoMode } from './components/RepoPicker'
 import { Stepper } from './components/Stepper'
-import { Alert, Check, GitHubMark, Info, Logo, Moon, Refresh, Sun, Trash } from './components/Icons'
+import { WelcomeScreen } from './components/WelcomeScreen'
+import { Alert, Book, GitHubMark, Info, Logo, Moon, Refresh, Sun, Trash } from './components/Icons'
 import { useGitHub } from './hooks/useGitHub'
 import { usePublish, useSettings, useTheme } from './hooks/usePublish'
-import type { GitHubRepo, PublishResult } from './lib/github'
-import { DEFAULT_IGNORE_PATTERNS, compileIgnore } from './lib/ignore'
+import {
+  MAX_COMMIT_FILES,
+  MAX_PREVIEWS,
+  PREVIEW_BYTES,
+  countCommits,
+  type GitHubRepo,
+  type PublishResult,
+} from './lib/github'
+import { DEFAULT_IGNORE_PATTERNS, MAX_BLOB_SIZE, compileIgnore } from './lib/ignore'
 import {
   buildProject,
   projectFromZip,
@@ -22,9 +31,14 @@ import {
   type ProjectSource,
 } from './lib/project'
 import { ZipError } from './lib/zip'
+import { formatAcceptanceDate, formatAgreementVersion, isAgreementAccepted, readAcceptance, saveAcceptance, type AgreementAcceptance } from './lib/agreement'
 import { formatBytes, formatFiles, formatNumber } from './lib/format'
 
-const STEPS = ['GitHub', 'Проект', 'Репозиторий', 'Отправка']
+const STEPS = ['Соглашение', 'GitHub', 'Проект', 'Отправка']
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
 const encoder = new TextEncoder()
 
 interface ScanResult {
@@ -34,11 +48,21 @@ interface ScanResult {
   warnings?: string[]
 }
 
+type View = 'welcome' | 'agreement' | 'app'
+
 export default function App() {
   const { theme, toggle } = useTheme()
   const github = useGitHub()
   const { settings, update } = useSettings()
   const publish = usePublish()
+
+  /* ------------------------------ онбординг ------------------------------- */
+
+  const [acceptance, setAcceptance] = useState<AgreementAcceptance | null>(() => readAcceptance())
+  const [view, setView] = useState<View>(() => (isAgreementAccepted() ? 'app' : 'welcome'))
+  const [readOnlyAgreement, setReadOnlyAgreement] = useState(false)
+
+  /* -------------------------------- проект -------------------------------- */
 
   const [project, setProject] = useState<Project | null>(null)
   const [importBusy, setImportBusy] = useState(false)
@@ -46,6 +70,8 @@ export default function App() {
   const [importProgress, setImportProgress] = useState<string | null>(null)
   const [excluded, setExcluded] = useState<Set<string>>(new Set())
   const [included, setIncluded] = useState<Set<string>>(new Set())
+
+  /* ----------------------------- репозиторий ------------------------------ */
 
   const [mode, setMode] = useState<RepoMode>('new')
   const [draft, setDraft] = useState<NewRepoDraft>({ name: '', owner: '', private: true, description: '' })
@@ -56,8 +82,6 @@ export default function App() {
 
   const scanAbort = useRef<AbortController | null>(null)
   const lastProgressAt = useRef(0)
-
-  /* ------------------------------ подключение ----------------------------- */
 
   useEffect(() => {
     if (github.user && !draft.owner) setDraft((prev) => ({ ...prev, owner: github.user!.login }))
@@ -244,7 +268,7 @@ export default function App() {
     [github.client],
   )
 
-  /* ------------------------------ публикация ------------------------------- */
+  /* ------------------------- план выгрузки и публикация -------------------- */
 
   const generatedIgnore = useMemo(() => {
     const parts: string[] = []
@@ -252,6 +276,40 @@ export default function App() {
     if (settings.extraIgnore.trim()) parts.push(settings.extraIgnore.trim())
     return parts.length ? `${parts.join('\n')}\n` : ''
   }, [settings.useDefaultIgnore, settings.extraIgnore])
+
+  const generatedReadme = useMemo(() => {
+    if (!project) return ''
+    return [`# ${project.name}`, '', draft.description.trim() || '', '', '_Проект залит в GitHub через Git it._', ''].join('\n')
+  }, [project, draft.description])
+
+  /** Итоговый список файлов: выбранные + сгенерированные по настройкам. */
+  const filesToSend = useMemo((): ProjectFile[] => {
+    if (!project) return []
+    const files: ProjectFile[] = [...selectedFiles]
+    if (settings.addGitignore && !project.hasGitignore && generatedIgnore) {
+      files.push({ path: '.gitignore', size: generatedIgnore.length, read: async () => encoder.encode(generatedIgnore) })
+    }
+    if (settings.addReadme && !project.hasReadme && generatedReadme) {
+      files.push({ path: 'README.md', size: generatedReadme.length, read: async () => encoder.encode(generatedReadme) })
+    }
+    return files
+  }, [project, selectedFiles, settings.addGitignore, settings.addReadme, generatedIgnore, generatedReadme])
+
+  /** Файлы, которые GitHub через API не примет ни в каком виде. */
+  const oversizeFiles = useMemo(
+    () => filesToSend.filter((file) => file.size > MAX_BLOB_SIZE),
+    [filesToSend],
+  )
+
+  const limits = useMemo(
+    () => ({
+      maxFiles: clamp(Math.round(settings.commitFileLimit) || MAX_COMMIT_FILES, 1, MAX_COMMIT_FILES),
+      maxBytes: clamp(Math.round(settings.commitByteLimitMb) || 400, 1, 2000) * 1024 * 1024,
+    }),
+    [settings.commitFileLimit, settings.commitByteLimitMb],
+  )
+  const plannedCommits = useMemo(() => (filesToSend.length ? countCommits(filesToSend, limits) : 1), [filesToSend, limits])
+  const useMultiCommit = settings.batchMode === 'multi' || (settings.batchMode === 'auto' && plannedCommits > 1)
 
   const authorFromSettings = useMemo(() => {
     const login = github.user?.login ?? 'git-it'
@@ -266,77 +324,87 @@ export default function App() {
     github.client &&
       github.user &&
       project &&
-      selectedFiles.length > 0 &&
+      filesToSend.length > 0 &&
       (mode === 'new' ? draft.name.trim().length > 0 : Boolean(selectedRepo)),
   )
 
   const startPublish = useCallback(async () => {
     if (!github.client || !github.user || !project) return
 
-    const files: ProjectFile[] = [...selectedFiles]
-    const commitMessage =
-      settings.commitMessage.trim() || `Загрузка проекта «${project.name}» через Git it`
-
-    if (settings.addGitignore && !project.hasGitignore && generatedIgnore) {
-      files.push({
-        path: '.gitignore',
-        size: generatedIgnore.length,
-        read: async () => encoder.encode(generatedIgnore),
-      })
-    }
-    if (settings.addReadme && !project.hasReadme) {
-      const readme = [`# ${project.name}`, '', draft.description.trim() || '', '', '_Проект залит в GitHub через Git it._', ''].join('\n')
-      files.push({ path: 'README.md', size: readme.length, read: async () => encoder.encode(readme) })
-    }
-
+    const files = filesToSend
+    const commitMessage = settings.commitMessage.trim() || `Загрузка проекта «${project.name}» через Git it`
     const subdir = settings.subdir.trim() ? settings.subdir.trim().replace(/^\/+|\/+$/g, '') : undefined
 
-    await publish.run(async ({ onProgress, signal }): Promise<PublishResult> => {
-      if (mode === 'new') {
-        const name = sanitizeRepoName(draft.name)
-        return github.client!.createRepoAndPublish({
-          name,
-          private: draft.private,
-          description: draft.description.trim() || undefined,
-          owner: github.user!.login,
-          org: draft.owner && draft.owner !== github.user!.login ? draft.owner : null,
-          files,
-          message: commitMessage,
-          author: authorFromSettings,
-          subdir,
-          skipUnchanged: settings.skipUnchanged,
-          onProgress,
-          signal,
-        })
+    // пробники для файлов, которые GitHub не примет: покажем пользователю, что именно пропущено
+    const previews = new Map<string, Uint8Array>()
+    for (const file of files.filter((item) => item.size > MAX_BLOB_SIZE).slice(0, MAX_PREVIEWS)) {
+      if (!file.readPreview) continue
+      try {
+        previews.set(file.path, await file.readPreview(PREVIEW_BYTES))
+      } catch {
+        /* пробник — вспомогательная вещь, без него тоже работаем */
       }
+    }
 
-      const repo = selectedRepo!
-      return github.client!.publishProject({
-        owner: repo.owner.login,
-        repo: repo.name,
-        branch,
+    await publish.run(async ({ onProgress, signal }): Promise<PublishResult> => {
+      const shared = {
         files,
         message: commitMessage,
         author: authorFromSettings,
         subdir,
-        skipUnchanged: settings.skipUnchanged,
+        skipOversized: settings.skipLargeFiles,
+        previews,
         onProgress,
         signal,
-      })
+      }
+
+      if (mode === 'new') {
+        return github.client!.createRepoAndPublish({
+          ...shared,
+          name: sanitizeRepoName(draft.name),
+          private: draft.private,
+          description: draft.description.trim() || undefined,
+          owner: github.user!.login,
+          org: draft.owner && draft.owner !== github.user!.login ? draft.owner : null,
+          skipUnchanged: false,
+          inCommits: useMultiCommit,
+          maxFiles: limits.maxFiles,
+          maxBytes: limits.maxBytes,
+        })
+      }
+
+      const repo = selectedRepo!
+      const target = {
+        ...shared,
+        owner: repo.owner.login,
+        repo: repo.name,
+        branch,
+        skipUnchanged: settings.skipUnchanged,
+      }
+
+      return useMultiCommit
+        ? github.client!.publishProjectInCommits({
+            ...target,
+            maxFiles: limits.maxFiles,
+            maxBytes: limits.maxBytes,
+            mode: settings.mergeMode,
+          })
+        : github.client!.publishProject(target)
     })
   }, [
     authorFromSettings,
     branch,
     draft,
-    generatedIgnore,
+    filesToSend,
     github.client,
     github.user,
+    limits,
     mode,
     project,
     publish,
-    selectedFiles,
     selectedRepo,
     settings,
+    useMultiCommit,
   ])
 
   const restart = useCallback(() => {
@@ -347,12 +415,206 @@ export default function App() {
     setBranch('')
   }, [publish, resetProject])
 
+  const acceptAgreement = useCallback(() => {
+    setAcceptance(saveAcceptance())
+    setReadOnlyAgreement(false)
+    setView('app')
+  }, [])
+
+  const openAgreement = useCallback((readOnly: boolean) => {
+    setReadOnlyAgreement(readOnly)
+    setView('agreement')
+  }, [])
+
   /* --------------------------------- рендер -------------------------------- */
 
-  const currentStep = !github.user ? 0 : !project ? 1 : publish.status === 'running' || publish.status === 'done' ? 3 : 2
+  if (view === 'welcome') {
+    return (
+      <Shell theme={theme} onToggleTheme={toggle}>
+        <WelcomeScreen onStart={() => openAgreement(false)} acceptance={acceptance} />
+      </Shell>
+    )
+  }
+
+  if (view === 'agreement') {
+    return (
+      <Shell theme={theme} onToggleTheme={toggle}>
+        <AgreementScreen
+          acceptance={acceptance}
+          readOnly={readOnlyAgreement}
+          onAccept={acceptAgreement}
+          onBack={() => setView(readOnlyAgreement ? 'app' : 'welcome')}
+        />
+      </Shell>
+    )
+  }
+
+  const agreementDone = Boolean(acceptance)
+  const currentStep = !agreementDone ? 0 : !github.user ? 1 : !project ? 2 : 3
   const showSuccess = publish.status === 'done'
   const busyConfig = publish.status === 'running'
 
+  return (
+    <Shell theme={theme} onToggleTheme={toggle} user={github.user} onSignOut={github.signOut}>
+      <Stepper steps={STEPS} current={currentStep} />
+
+      <AuthPanel
+        status={github.status}
+        user={github.user}
+        error={github.error}
+        hasSavedToken={Boolean(github.token)}
+        onSignIn={github.signIn}
+        onSignOut={github.signOut}
+      />
+
+      {github.user && !showSuccess && (
+        <>
+          {!project && (
+            <DropZone
+              busy={importBusy}
+              progressText={importProgress}
+              error={importError}
+              onDropEntries={handleDropEntries}
+              onFiles={handleFiles}
+            />
+          )}
+
+          {project && (
+            <>
+              <section className="card project-card">
+                <div className="project-head">
+                  <div>
+                    <span className="card-step">Шаг 3</span>
+                    <h2>{project.name}</h2>
+                    <p className="muted small">
+                      {project.source === 'zip' ? 'Из ZIP-архива' : project.source === 'folder' ? 'Из папки' : 'Из файлов'}
+                      {project.rootFolder && project.source !== 'zip' ? ` «${project.rootFolder}»` : ''} ·{' '}
+                      {formatFiles(project.files.length)} · {formatBytes(project.totalSize)}
+                    </p>
+                  </div>
+                  <button type="button" className="btn btn-ghost" onClick={resetProject} disabled={busyConfig}>
+                    <Refresh size={16} /> Другой проект
+                  </button>
+                </div>
+
+                {project.warnings.map((warning) => (
+                  <p className="notice notice-warn" key={warning}>
+                    <Alert size={18} /> {warning}
+                  </p>
+                ))}
+                {project.truncated && (
+                  <p className="notice notice-warn">
+                    <Alert size={18} /> Файлов оказалось очень много — показали и взяли первые{' '}
+                    {formatNumber(project.files.length)}. Выгружайте проект частями или по каталогам.
+                  </p>
+                )}
+              </section>
+
+              <FileTree
+                files={project.files}
+                isIgnored={isIgnored}
+                isSelected={isSelected}
+                onToggleFile={toggleFile}
+                onTogglePaths={togglePaths}
+                selectedCount={selectedFiles.length}
+                selectedBytes={selectedBytes}
+              />
+
+              {!busyConfig && (
+                <>
+                  <RepoPicker
+                    mode={mode}
+                    onModeChange={setMode}
+                    user={github.user}
+                    orgs={github.orgs}
+                    draft={draft}
+                    onDraftChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
+                    repos={github.repos}
+                    loadingRepos={github.loadingRepos}
+                    onRefresh={github.refresh}
+                    selectedRepo={selectedRepo}
+                    onSelectRepo={(repo) => void selectRepo(repo)}
+                    branches={branches}
+                    branch={branch}
+                    onBranchChange={setBranch}
+                    loadingBranches={loadingBranches}
+                  />
+
+                  <PublishPanel
+                    settings={settings}
+                    update={update}
+                    projectName={project.name}
+                    selectedCount={selectedFiles.length}
+                    selectedBytes={selectedBytes}
+                    projectFileCount={project.files.length}
+                    projectBytes={project.totalSize}
+                    hasGitignore={project.hasGitignore}
+                    hasReadme={project.hasReadme}
+                    plannedCommits={plannedCommits}
+                    useMultiCommit={useMultiCommit}
+                    oversizeFiles={oversizeFiles}
+                    publishing={publish.status === 'running'}
+                    onPublish={() => void startPublish()}
+                  />
+
+                  {!canPublish && (
+                    <p className="notice notice-info">
+                      <Info size={18} />{' '}
+                      {mode === 'new'
+                        ? 'Заполните имя репозитория, чтобы отправить проект.'
+                        : 'Выберите репозиторий в списке выше.'}
+                    </p>
+                  )}
+                </>
+              )}
+
+              {(publish.status === 'running' || publish.status === 'error' || publish.status === 'canceled') && (
+                <ProgressPanel
+                  state={publish}
+                  onCancel={publish.cancel}
+                  onRetry={() => void startPublish()}
+                  onRestart={restart}
+                />
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      {showSuccess && (
+        <ProgressPanel state={publish} onCancel={publish.cancel} onRetry={() => void startPublish()} onRestart={restart} />
+      )}
+
+      <footer className="footer">
+        <p className="muted small">
+          <GitHubMark size={16} /> Git it · работает целиком в браузере: обращения идут напрямую к api.github.com, у
+          приложения нет своего сервера.
+        </p>
+        <p className="muted small">
+          <button type="button" className="link-btn" onClick={() => openAgreement(true)}>
+            <Book size={14} /> Лицензионное соглашение {formatAgreementVersion()}
+          </button>
+          {acceptance && <span className="muted small">· принято {formatAcceptanceDate(acceptance.acceptedAt)}</span>}
+        </p>
+      </footer>
+    </Shell>
+  )
+}
+
+/** Общая оболочка: фон, шапка с темой и подключённым аккаунтом. */
+function Shell({
+  theme,
+  onToggleTheme,
+  user,
+  onSignOut,
+  children,
+}: {
+  theme: 'dark' | 'light'
+  onToggleTheme: () => void
+  user?: { login: string; avatar_url: string; name: string | null } | null
+  onSignOut?: () => void
+  children: React.ReactNode
+}) {
   return (
     <div className="app">
       <div className="background" aria-hidden>
@@ -375,187 +637,27 @@ export default function App() {
           <button
             type="button"
             className="icon-btn"
-            onClick={toggle}
+            onClick={onToggleTheme}
             title={theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
             aria-label="Переключить тему"
           >
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
-          {github.user && (
+          {user && (
             <span className="account-chip">
-              <img src={github.user.avatar_url} alt="" width={24} height={24} />
-              <span className="mono">{github.user.login}</span>
-              <button type="button" className="icon-btn icon-btn-sm" onClick={github.signOut} title="Отключить аккаунт">
-                <Trash size={14} />
-              </button>
+              <img src={user.avatar_url} alt="" width={24} height={24} />
+              <span className="mono">{user.login}</span>
+              {onSignOut && (
+                <button type="button" className="icon-btn icon-btn-sm" onClick={onSignOut} title="Отключить аккаунт">
+                  <Trash size={14} />
+                </button>
+              )}
             </span>
           )}
         </div>
       </header>
 
-      <main className="content">
-        {!github.user && (
-          <section className="hero">
-            <h1>
-              Перетащите папку с проектом — <span className="gradient-text">остальное сделает Git it</span>
-            </h1>
-            <p className="muted">
-              Никакой командной строки, <code>git init</code> и разговоров про remote. Выбираете проект, выбираете
-              репозиторий — Git it собирает коммит через GitHub API и рассказывает, что происходит на каждом шаге.
-            </p>
-            <ul className="hero-list">
-              <li>
-                <Check size={16} /> Папка, ZIP или отдельные файлы
-              </li>
-              <li>
-                <Check size={16} /> node_modules, .env и .git улетают в игнор автоматически
-              </li>
-              <li>
-                <Check size={16} /> Токен не покидает ваш браузер
-              </li>
-            </ul>
-          </section>
-        )}
-
-        <Stepper steps={STEPS} current={currentStep} />
-
-        <AuthPanel
-          status={github.status}
-          user={github.user}
-          error={github.error}
-          hasSavedToken={Boolean(github.token)}
-          onSignIn={github.signIn}
-          onSignOut={github.signOut}
-        />
-
-        {github.user && !showSuccess && (
-          <>
-            {!project && (
-              <DropZone
-                busy={importBusy}
-                progressText={importProgress}
-                error={importError}
-                onDropEntries={handleDropEntries}
-                onFiles={handleFiles}
-              />
-            )}
-
-            {project && (
-              <>
-                <section className="card project-card">
-                  <div className="project-head">
-                    <div>
-                      <span className="card-step">Шаг 2</span>
-                      <h2>{project.name}</h2>
-                      <p className="muted small">
-                        {project.source === 'zip' ? 'Из ZIP-архива' : project.source === 'folder' ? 'Из папки' : 'Из файлов'}
-                        {project.rootFolder && project.source !== 'zip' ? ` «${project.rootFolder}»` : ''} ·{' '}
-                        {formatFiles(project.files.length)} · {formatBytes(project.totalSize)}
-                      </p>
-                    </div>
-                    <button type="button" className="btn btn-ghost" onClick={resetProject} disabled={busyConfig}>
-                      <Refresh size={16} /> Другой проект
-                    </button>
-                  </div>
-
-                  {project.warnings.map((warning) => (
-                    <p className="notice notice-warn" key={warning}>
-                      <Alert size={18} /> {warning}
-                    </p>
-                  ))}
-                  {project.truncated && (
-                    <p className="notice notice-warn">
-                      <Alert size={18} /> Файлов оказалось очень много — показали и взяли первые{' '}
-                      {formatNumber(project.files.length)}. Залейте проект частями, если нужно больше.
-                    </p>
-                  )}
-                  {project.totalSize > 900 * 1024 * 1024 && (
-                    <p className="notice notice-warn">
-                      <Alert size={18} /> Проект больше 900 МБ — GitHub может отказать. Попробуйте исключить тяжёлые
-                      каталоги.
-                    </p>
-                  )}
-                </section>
-
-                <FileTree
-                  files={project.files}
-                  isIgnored={isIgnored}
-                  isSelected={isSelected}
-                  onToggleFile={toggleFile}
-                  onTogglePaths={togglePaths}
-                  selectedCount={selectedFiles.length}
-                  selectedBytes={selectedBytes}
-                />
-
-                {!busyConfig && (
-                  <>
-                    <RepoPicker
-                      mode={mode}
-                      onModeChange={setMode}
-                      user={github.user}
-                      orgs={github.orgs}
-                      draft={draft}
-                      onDraftChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
-                      repos={github.repos}
-                      loadingRepos={github.loadingRepos}
-                      onRefresh={github.refresh}
-                      selectedRepo={selectedRepo}
-                      onSelectRepo={(repo) => void selectRepo(repo)}
-                      branches={branches}
-                      branch={branch}
-                      onBranchChange={setBranch}
-                      loadingBranches={loadingBranches}
-                    />
-
-                    <PublishPanel
-                      settings={settings}
-                      update={update}
-                      projectName={project.name}
-                      selectedCount={selectedFiles.length}
-                      selectedBytes={selectedBytes}
-                      projectFileCount={project.files.length}
-                      projectBytes={project.totalSize}
-                      hasGitignore={project.hasGitignore}
-                      hasReadme={project.hasReadme}
-                      publishing={publish.status === 'running'}
-                      onPublish={() => void startPublish()}
-                    />
-
-                    {!canPublish && (
-                      <p className="notice notice-info">
-                        <Info size={18} />{' '}
-                        {mode === 'new'
-                          ? 'Заполните имя репозитория, чтобы отправить проект.'
-                          : 'Выберите репозиторий в списке выше.'}
-                      </p>
-                    )}
-                  </>
-                )}
-
-                {(publish.status === 'running' || publish.status === 'error' || publish.status === 'canceled') && (
-                  <ProgressPanel
-                    state={publish}
-                    onCancel={publish.cancel}
-                    onRetry={() => void startPublish()}
-                    onRestart={restart}
-                  />
-                )}
-              </>
-            )}
-          </>
-        )}
-
-        {showSuccess && (
-          <ProgressPanel state={publish} onCancel={publish.cancel} onRetry={() => void startPublish()} onRestart={restart} />
-        )}
-
-        <footer className="footer">
-          <p className="muted small">
-            <GitHubMark size={16} /> Git it · работает целиком в браузере: обращения идут напрямую к api.github.com, у
-            приложения нет своего сервера и оно не видит ваш код.
-          </p>
-        </footer>
-      </main>
+      <main className="content">{children}</main>
     </div>
   )
 }

@@ -72,9 +72,22 @@ export function usePublish() {
   return { ...state, run, cancel, reset }
 }
 
+export type BatchMode = 'auto' | 'multi' | 'single'
+export type MergeMode = 'append' | 'replace'
+
 export interface Settings {
   /** Использовать правило «не заливать лишнее» */
   useDefaultIgnore: boolean
+  /** Одним коммитом, всегда частями или по потребности (auto) */
+  batchMode: BatchMode
+  /** Что делать с файлами, которых нет в проекте, при загрузке частями */
+  mergeMode: MergeMode
+  /** Файлы больше 100 МБ: пропустить с отчётом или остановить загрузку */
+  skipLargeFiles: boolean
+  /** Максимум файлов в одном коммите */
+  commitFileLimit: number
+  /** Максимум мегабайт в одном коммите */
+  commitByteLimitMb: number
   /** Дополнительные шаблоны .gitignore */
   extraIgnore: string
   /** Проверять уже загруженные файлы и не передавать их повторно */
@@ -92,6 +105,11 @@ export interface Settings {
 
 const DEFAULT_SETTINGS: Settings = {
   useDefaultIgnore: true,
+  batchMode: 'auto',
+  mergeMode: 'append',
+  skipLargeFiles: true,
+  commitFileLimit: 10_000,
+  commitByteLimitMb: 400,
   extraIgnore: '',
   skipUnchanged: true,
   subdir: '',

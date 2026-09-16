@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import App from './App'
+import { AGREEMENT_VERSION, agreementAsMarkdown } from './lib/agreement'
 
 /* jsdom не всегда отдаёт WebCrypto — для хешей git-объектов он нужен */
 if (!globalThis.crypto?.subtle) {
@@ -18,6 +19,7 @@ interface RecordedCall {
 let calls: RecordedCall[] = []
 let repoExists = false
 let treeFiles: Array<Record<string, unknown>> = []
+let counters = { blob: 0, tree: 0, commit: 0 }
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } })
@@ -59,14 +61,13 @@ function installFetchMock() {
       return json(repoExists ? [repoPayload()] : [])
     }
 
-    // пути вида /repos/:owner/:repo/git/...
     const git = url.pathname.match(/^\/repos\/[^/]+\/[^/]+\/git\/(.+)$/)
     if (git) {
       const rest = git[1]!
-      if (rest === 'blobs') return json({ sha: `blob-${calls.length}` }, 201)
-      if (rest === 'trees') return json({ sha: 'tree-1' }, 201)
+      if (rest === 'blobs') return json({ sha: `blob-${++counters.blob}` }, 201)
+      if (rest === 'trees') return json({ sha: `tree-${++counters.tree}` }, 201)
       if (rest.startsWith('trees/')) return json({ tree: treeFiles })
-      if (rest === 'commits') return json({ sha: 'commit-sha' }, 201)
+      if (rest === 'commits') return json({ sha: `commit-${++counters.commit}` }, 201)
       if (rest === 'refs') return json({ ref: 'refs/heads/main' }, 201)
       if (rest.startsWith('refs/heads/')) return json({ ref: 'refs/heads/main' })
       if (rest.startsWith('ref/heads/')) {
@@ -90,6 +91,21 @@ function fileOf(path: string, content: string): File {
   return file
 }
 
+/** Файл «на 120 МБ»: размер подменяем, чтобы не занимать память в тесте. */
+function hugeFileOf(path: string, size = 120 * 1024 * 1024): File {
+  const file = fileOf(path, 'начало большого файла')
+  Object.defineProperty(file, 'size', { value: size })
+  return file
+}
+
+/** Отметка о принятом соглашении — как будто пользователь уже прочитал его. */
+function seedAcceptance() {
+  localStorage.setItem(
+    'gitit.agreement',
+    JSON.stringify({ version: AGREEMENT_VERSION, acceptedAt: '2026-09-16T10:00:00.000Z' }),
+  )
+}
+
 async function signIn() {
   const input = document.getElementById('token')!
   fireEvent.change(input, { target: { value: 'ghp_test_token' } })
@@ -108,6 +124,7 @@ beforeEach(() => {
   calls = []
   repoExists = false
   treeFiles = []
+  counters = { blob: 0, tree: 0, commit: 0 }
   localStorage.clear()
   installFetchMock()
 })
@@ -117,15 +134,79 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('первый запуск: приветствие и соглашение', () => {
+  it('показывает экран «о проекте» и не пускает дальше без согласия', () => {
+    render(<App />)
+
+    // заставка: что делает проект и как это работает
+    expect(screen.getByText(/Перетащите папку с проектом/i)).toBeTruthy()
+    expect(screen.getByText('Как это работает')).toBeTruthy()
+    expect(screen.getByText('Поехали?')).toBeTruthy()
+    // без согласия формы токена нет
+    expect(document.getElementById('token')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Начать' }))
+
+    // экран соглашения: текст целиком внутри страницы, а не ссылкой наружу
+    expect(screen.getByRole('region', { name: /Текст лицензионного соглашения/i })).toBeTruthy()
+    expect(document.body.textContent).toContain('Ограничение ответственности')
+    expect(document.body.textContent).toContain('Лицензия MIT и что она значит')
+    // согласие нельзя проставить, просто нажав кнопку: она заблокирована до конца текста
+    const acceptButton = screen.getByRole('button', { name: /Принимаю соглашение|Сначала дочитайте/i }) as HTMLButtonElement
+    expect(acceptButton.disabled || acceptButton.textContent?.includes('дочитайте')).toBeTruthy()
+  })
+
+  it('после дочитывания сохраняет отметку о согласии и открывает приложение', async () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Начать' }))
+
+    const box = screen.getByRole('region', { name: /Текст лицензионного соглашения/i })
+    // jsdom не считает layout: подменяем метрики так, как их увидел бы настоящий браузер
+    Object.defineProperty(box, 'scrollHeight', { value: 4000, configurable: true })
+    Object.defineProperty(box, 'clientHeight', { value: 400, configurable: true })
+    Object.defineProperty(box, 'scrollTop', { value: 0, configurable: true })
+    fireEvent.scroll(box)
+    expect((screen.getByRole('button', { name: /Сначала дочитайте/i }) as HTMLButtonElement).disabled).toBe(true)
+
+    // доскроллили до конца — теперь можно согласиться
+    Object.defineProperty(box, 'scrollTop', { value: 3600, configurable: true })
+    fireEvent.scroll(box)
+
+    const acceptButton = await screen.findByRole('button', { name: 'Принимаю соглашение' })
+    fireEvent.click(acceptButton)
+
+    // открылся основной сценарий, отметка о согласии сохранена
+    await waitFor(() => expect(document.getElementById('token')).toBeTruthy())
+    const saved = JSON.parse(localStorage.getItem('gitit.agreement')!)
+    expect(saved.version).toBe(AGREEMENT_VERSION)
+    expect(typeof saved.acceptedAt).toBe('string')
+  })
+
+  it('при уже принятом соглашении сразу показывает рабочий экран', () => {
+    seedAcceptance()
+    render(<App />)
+    expect(document.getElementById('token')).toBeTruthy()
+    expect(screen.getByText(/Подключите GitHub/i)).toBeTruthy()
+  })
+
+  it('текст соглашения в приложении и в AGREEMENT.md совпадает по смыслу', () => {
+    const markdown = agreementAsMarkdown()
+    expect(markdown).toContain('## 8. Ограничение ответственности')
+    expect(markdown).toContain('100 МБ')
+    // в тексте соглашения есть пункт про принятие и версию
+    expect(markdown).toContain(`Версия ${AGREEMENT_VERSION}`)
+  })
+})
+
 describe('Git it — полный сценарий', () => {
+  beforeEach(seedAcceptance)
+
   it('подключается к GitHub, читает папку и заливает проект в новый репозиторий', async () => {
     render(<App />)
 
-    // Шаг 1 — подключение
     expect(screen.getByText(/Подключите GitHub/i)).toBeTruthy()
     await signIn()
 
-    // Шаг 2 — импорт папки
     expect(screen.getByText(/Перетащите папку с проектом/i)).toBeTruthy()
     importFolder([
       fileOf('my-app/package.json', '{"name":"my-app"}'),
@@ -148,11 +229,9 @@ describe('Git it — полный сценарий', () => {
       expect(row.textContent).toContain('исключён')
     }
 
-    // имя репозитория подставилось из папки
     const nameInput = document.getElementById('repo-name') as HTMLInputElement
     expect(nameInput.value).toBe('my-app')
 
-    // Шаг 4 — публикация
     fireEvent.click(screen.getByRole('button', { name: /Загрузить в GitHub/i }))
     await screen.findByRole('link', { name: /Открыть репозиторий/i }, { timeout: 8000 })
 
@@ -171,7 +250,6 @@ describe('Git it — полный сценарий', () => {
     const commit = calls.find((call) => call.path.endsWith('/git/commits'))!
     expect(commit.body!.parents).toEqual([])
 
-    // ссылка на репозиторий появилась, локальные файлы не тронуты
     expect(screen.getByRole('link', { name: /Открыть репозиторий/i }).getAttribute('href')).toBe(
       'https://github.com/octocat/my-app',
     )
@@ -184,7 +262,6 @@ describe('Git it — полный сценарий', () => {
     importFolder([fileOf('demo/index.html', '<h1>привет</h1>')])
     await waitFor(() => expect(screen.getByText('Файлы проекта')).toBeTruthy())
 
-    // ломаем создание репозитория: не хватает прав
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = new URL(String(input))
       if (url.pathname === '/user') {
@@ -206,7 +283,6 @@ describe('Git it — полный сценарий', () => {
   it('работает с существующим репозиторием и добавляет файлы в выбранную ветку', async () => {
     repoExists = true
     treeFiles = [
-      // файл с тем же содержимым, что и локальный: повторно отправляться не должен
       {
         path: 'src/main.ts',
         mode: '100644',
@@ -242,14 +318,88 @@ describe('Git it — полный сценарий', () => {
       'README.md',
       'src/extra.ts',
     ])
-    expect((tree.body!.base_tree as string)).toBe('head-sha')
+    expect(tree.body!.base_tree as string).toBe('head-sha')
     expect(document.body.textContent).toContain('Не пришлось передавать')
+  })
+})
 
-    const commit = calls.find((call) => call.path.endsWith('/git/commits'))!
-    expect(commit.body!.parents).toEqual(['head-sha'])
+describe('выгрузка частями и большие файлы', () => {
+  beforeEach(seedAcceptance)
 
-    const ref = calls.find((call) => call.path === '/repos/octocat/demo/git/refs/heads/main')!
-    expect(ref.method).toBe('PATCH')
-    expect(ref.body).toMatchObject({ sha: 'commit-sha' })
+  it('заливает проект несколькими коммитами, когда файлов больше лимита пачки', async () => {
+    render(<App />)
+    await signIn()
+
+    importFolder(
+      Array.from({ length: 5 }, (_, index) => fileOf(`big-project/src/file-${index}.ts`, `// файл ${index}`)),
+    )
+    await waitFor(() => expect(screen.getByText('Файлы проекта')).toBeTruthy())
+
+    // включаем выгрузку частями и уменьшаем пачку до двух файлов
+    fireEvent.click(screen.getByRole('button', { name: /Дополнительные настройки/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Всегда частями' }))
+    const limitInput = document.getElementById('file-limit') as HTMLInputElement
+    fireEvent.change(limitInput, { target: { value: '2' } })
+
+    expect(document.body.textContent).toMatch(/Выгрузка в \d+ коммит/)
+
+    fireEvent.click(screen.getByRole('button', { name: /Загрузить в GitHub/i }))
+    await screen.findByRole('link', { name: /Открыть репозиторий/i }, { timeout: 8000 })
+
+    const commits = calls.filter((call) => call.method === 'POST' && call.path.endsWith('/git/commits'))
+    expect(commits.length).toBeGreaterThan(1)
+    // сообщения коммитов пронумерованы, чтобы части было видно в истории
+    expect(commits.map((call) => call.body!.message)).toEqual(
+      expect.arrayContaining([expect.stringContaining('часть 1 из'), expect.stringContaining('часть 2 из')]),
+    )
+    // каждый следующий коммит продолжает предыдущий
+    expect((commits[1]!.body!.parents as string[])[0]).toBe('commit-1')
+    expect(document.body.textContent).toContain('Коммитов создано')
+  })
+
+  it('файлы больше 100 МБ не ломают выгрузку: их пропускают с отчётом', async () => {
+    render(<App />)
+    await signIn()
+
+    importFolder([
+      fileOf('demo/src/small.ts', 'console.log(1)'),
+      hugeFileOf('demo/video/master.mov', 320 * 1024 * 1024),
+      hugeFileOf('demo/data/dump.sql', 150 * 1024 * 1024),
+    ])
+    await waitFor(() => expect(screen.getByText('Файлы проекта')).toBeTruthy())
+
+    // предупреждение видно ещё до отправки
+    expect(document.body.textContent).toContain('не больше 100 МБ')
+    expect(document.body.textContent).toContain('Как всё-таки выгрузить файлы больше 100 МБ')
+
+    fireEvent.click(screen.getByRole('button', { name: /Загрузить в GitHub/i }))
+    await screen.findByRole('link', { name: /Открыть репозиторий/i }, { timeout: 8000 })
+
+    // большой файл не читаем и в GitHub не отправляем
+    const blobs = calls.filter((call) => call.path.endsWith('/git/blobs'))
+    const tree = calls.find((call) => call.method === 'POST' && call.path.endsWith('/git/trees'))!
+    const treePaths = (tree.body!.tree as Array<{ path: string }>).map((item) => item.path)
+    expect(treePaths).not.toContain('video/master.mov')
+    expect(treePaths).toContain('src/small.ts')
+    expect(blobs.length).toBeGreaterThan(0)
+
+    // и на экране результата честно сказано, что именно не уехало
+    expect(document.body.textContent).toContain('не выгружено')
+    expect(document.body.textContent).toContain('video/master.mov')
+  })
+
+  it('с выключенным пропуском останавливает выгрузку и объясняет причину', async () => {
+    render(<App />)
+    await signIn()
+
+    importFolder([fileOf('demo/ok.ts', 'ok'), hugeFileOf('demo/huge.bin', 200 * 1024 * 1024)])
+    await waitFor(() => expect(screen.getByText('Файлы проекта')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: /Остановить загрузку с ошибкой/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Загрузить в GitHub/i }))
+
+    await waitFor(() => expect(screen.getByText(/Не получилось/i)).toBeTruthy())
+    expect(document.body.textContent).toContain('100 МБ')
+    expect(calls.filter((call) => call.path.endsWith('/git/blobs'))).toHaveLength(0)
   })
 })

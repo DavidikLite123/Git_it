@@ -14,6 +14,9 @@ const LOCAL_HEADER_SIGNATURE = 0x04034b50
 
 const METHODS = { store: 0, deflate: 8 } as const
 
+/** Сколько первых байт по умолчанию отдавать «пробником». */
+const PREVIEW_LIMIT = 256 * 1024
+
 export class ZipError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
@@ -33,6 +36,8 @@ export interface ZipEntry {
   crc32: number
   /** Читает и распаковывает содержимое по требованию */
   read(): Promise<Uint8Array>
+  /** Читает только первые байты файла — для больших файлов, которые GitHub не примет */
+  readPreview?(limit?: number): Promise<Uint8Array>
 }
 
 export interface ZipArchive {
@@ -119,6 +124,7 @@ export async function readZip(blob: Blob): Promise<ZipArchive> {
       method: record.method,
       crc32: record.crc32,
       read: () => readEntryData(blob, record),
+      readPreview: (limit?: number) => readEntryPreview(blob, record, limit ?? PREVIEW_LIMIT),
     })
   }
 
@@ -225,6 +231,54 @@ function readCentralDirectory(directory: DataView, maxEntries: number): CentralR
     offset = extraStart + extraLength + commentLength
   }
   return records
+}
+
+/**
+ * Читает только начало файла. Для сжатых записей распаковка идёт потоком и
+ * прерывается, как только набралось достаточно байт, — распаковывать гигабайты
+ * целиком не нужно.
+ */
+async function readEntryPreview(blob: Blob, record: CentralRecord, limit: number): Promise<Uint8Array> {
+  if (record.flags & 0x1) return new Uint8Array(0)
+
+  const header = new DataView(await blob.slice(record.localOffset, record.localOffset + 30).arrayBuffer())
+  if (header.byteLength < 30 || header.getUint32(0, true) !== LOCAL_HEADER_SIGNATURE) return new Uint8Array(0)
+  const nameLength = header.getUint16(26, true)
+  const extraLength = header.getUint16(28, true)
+  const dataStart = record.localOffset + 30 + nameLength + extraLength
+  const dataEnd = Math.min(dataStart + record.compressedSize, blob.size)
+
+  if (record.method === METHODS.store) {
+    const end = Math.min(dataStart + limit, dataEnd)
+    return new Uint8Array(await blob.slice(dataStart, end).arrayBuffer())
+  }
+  if (record.method !== METHODS.deflate || typeof DecompressionStream === 'undefined') return new Uint8Array(0)
+
+  const reader = blob.slice(dataStart, dataEnd).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (total < limit) {
+      const { done, value } = await reader.read()
+      if (done || !value) break
+      const needed = limit - total
+      const piece = value.length > needed ? value.subarray(0, needed) : value
+      chunks.push(piece)
+      total += piece.length
+    }
+  } catch {
+    /* повреждённый хвост потока для пробника не важен */
+  } finally {
+    void reader.cancel().catch(() => undefined)
+  }
+
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.length
+  }
+  return out
 }
 
 async function readEntryData(blob: Blob, record: CentralRecord): Promise<Uint8Array> {

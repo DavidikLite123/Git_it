@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Check, Close, Copy, ExternalLink, GitHubMark, Refresh, Spinner, Zap } from './Icons'
+import { Alert, Check, Close, Copy, ExternalLink, GitHubMark, Layers, Refresh, Spinner, Zap } from './Icons'
 import type { PublishState } from '../hooks/usePublish'
-import { formatBytes, formatNumber, formatSeconds, truncateMiddle } from '../lib/format'
+import { formatBytes, formatFiles, formatNumber, formatSeconds, truncateMiddle } from '../lib/format'
 
 interface Props {
   state: PublishState
@@ -98,7 +98,12 @@ export function ProgressPanel({ state, onCancel, onRetry, onRestart }: Props) {
 
       <div className="meter">
         <div className="meter-head">
-          <span>{progress?.label ?? 'Подготовка…'}</span>
+          <span>
+            {progress?.label ?? 'Подготовка…'}
+            {progress?.commitTotal && progress.commitTotal > 1 && (
+              <span className="badge">коммит {progress.commitIndex} из {progress.commitTotal}</span>
+            )}
+          </span>
           <span className="mono">{percent}%</span>
         </div>
         <div className="meter-track">
@@ -128,6 +133,13 @@ export function ProgressPanel({ state, onCancel, onRetry, onRestart }: Props) {
           <dd>{state.status === 'running' && stats.eta ? `≈ ${formatSeconds(stats.eta)}` : '—'}</dd>
         </div>
       </dl>
+
+      {(progress?.skippedCount ?? 0) > 0 && (
+        <p className="notice notice-warn">
+          <Alert size={18} /> {formatFiles(progress!.skippedCount!)} больше 100 МБ пропущено — GitHub такие файлы через
+          API не принимает. Остальные выгружаются как обычно.
+        </p>
+      )}
 
       {progress?.currentPath && state.status === 'running' && (
         <p className="current-file mono">
@@ -182,6 +194,11 @@ function SuccessPanel({ state, onRestart }: { state: PublishState; onRestart: ()
         <Check size={30} />
       </div>
       <h2>Проект в GitHub 🎉</h2>
+      {result.nothingChanged && (
+        <p className="notice notice-ok">
+          <Check size={18} /> Содержимое репозитория уже совпадает с проектом — новый коммит не понадобился.
+        </p>
+      )}
       <p className="muted">
         {result.repoCreated ? 'Репозиторий создан, файлы уже внутри — ветка ' : 'Файлы уже в репозитории '}
         {!result.repoCreated && (
@@ -199,6 +216,10 @@ function SuccessPanel({ state, onRestart }: { state: PublishState; onRestart: ()
         <div>
           <dt>Отправлено файлов</dt>
           <dd>{formatNumber(result.uploadedCount)}</dd>
+        </div>
+        <div>
+          <dt>Коммитов создано</dt>
+          <dd>{formatNumber(result.commitCount)}</dd>
         </div>
         <div>
           <dt>Передано данных</dt>
@@ -225,6 +246,45 @@ function SuccessPanel({ state, onRestart }: { state: PublishState; onRestart: ()
           <Copy size={16} /> {copied === 'sha' ? 'Коммит скопирован' : result.commitSha.slice(0, 7)}
         </button>
       </div>
+
+      {result.commitCount > 1 && (
+        <p className="notice notice-ok">
+          <Layers size={18} /> Проект выгружен {formatNumber(result.commitCount)} коммитами — они идут по порядку в
+          ветке <code>{result.branch}</code>.
+        </p>
+      )}
+
+      {result.skipped.length > 0 && (
+        <div className="skipped-block">
+          <p className="notice notice-warn">
+            <Alert size={18} />{' '}
+            <span>
+              {formatFiles(result.skipped.length)} не выгружено: GitHub через API не принимает файлы больше 100 МБ.
+              Остальные файлы залиты.
+            </span>
+          </p>
+          <ul className="oversize-list">
+            {result.skipped.slice(0, 8).map((file) => (
+              <li key={file.path}>
+                <code>{file.path}</code>
+                <span className="muted small">{formatBytes(file.size)}</span>
+                {file.preview && <span className="muted small">· пробник: {formatBytes(file.preview.length)}</span>}
+              </li>
+            ))}
+            {result.skipped.length > 8 && <li className="muted small">и ещё {formatFiles(result.skipped.length - 8)}…</li>}
+          </ul>
+          <details className="details">
+            <summary>Что делать с этими файлами</summary>
+            <ol className="steps-list">
+              <li>
+                Git LFS: <code>git lfs track "*.ваш-формат"</code>, затем обычный <code>git add/commit/push</code>.
+              </li>
+              <li>Или загрузите их вручную через веб-интерфейс GitHub — там лимит больше, но всё равно не бесконечный.</li>
+              <li>Или разбейте файл на части и выгрузите их Git it как несколько обычных файлов.</li>
+            </ol>
+          </details>
+        </div>
+      )}
 
       <p className="muted small">
         Файлов на GitHub-странице может быть меньше, чем загружено: там не показываются скрытые (.env.example) и

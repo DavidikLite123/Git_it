@@ -62,4 +62,6 @@ export const STORAGE_KEYS = {
   viewer: 'gitit.viewer',
   theme: 'gitit.theme',
   settings: 'gitit.settings',
+  agreement: 'gitit.agreement',
+  welcome: 'gitit.welcome',
 } as const

@@ -171,6 +171,22 @@ export const Key = ({ size = 18, ...rest }: IconProps) => (
   </svg>
 )
 
+export const Book = ({ size = 20, ...rest }: IconProps) => (
+  <svg {...base({ size, ...rest })}>
+    <path d="M4 5.5A2 2 0 0 1 6 3.5h5.5v17H6a2 2 0 0 1-2-2Z" />
+    <path d="M11.5 3.5H18a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2h-6.5" />
+    <path d="M14 8h3M14 11.5h3" />
+  </svg>
+)
+
+export const Layers = ({ size = 20, ...rest }: IconProps) => (
+  <svg {...base({ size, ...rest })}>
+    <path d="M12 3 3 7.5l9 4.5 9-4.5Z" />
+    <path d="m3 12.5 9 4.5 9-4.5" />
+    <path d="m3 17 9 4.5L21 17" />
+  </svg>
+)
+
 export const Spinner = ({ size = 20, ...rest }: IconProps) => (
   <svg {...base({ size, ...rest })} className={`spin ${rest.className ?? ''}`} strokeWidth={2.2}>
     <path d="M12 3a9 9 0 1 0 9 9" />

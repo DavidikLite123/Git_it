@@ -21,6 +21,14 @@ export const TREE_BATCH_SIZE = 1000
 /** Сколько блобов заливаем параллельно: быстро, но без «флуда» в API. */
 export const CONCURRENCY = 6
 
+/** Границы одного коммита: столько файлов и байт кладём в один проход. */
+export const MAX_COMMIT_FILES = 10_000
+export const MAX_COMMIT_BYTES = 400 * 1024 * 1024
+/** Сколько первых байт большого файла сохраняем как «пробник». */
+export const PREVIEW_BYTES = 512 * 1024
+/** Больше этого числа пробников в память не тянем. */
+export const MAX_PREVIEWS = 20
+
 export interface GitHubUser {
   id: number
   login: string
@@ -76,11 +84,25 @@ export interface UploadProgress {
   /** сколько байт не пришлось передавать повторно */
   bytesReused: number
   currentPath?: string
+  /** Номер текущего коммита и их общее число (для загрузки по частям) */
+  commitIndex?: number
+  commitTotal?: number
+  /** Сколько файлов пропущено из-за лимита GitHub в 100 МБ */
+  skippedCount?: number
 }
 
 export interface Author {
   name: string
   email: string
+}
+
+/** Файл, который GitHub не примет через API (больше 100 МБ). */
+export interface SkippedFile {
+  path: string
+  size: number
+  reason: 'too-big'
+  /** Первые байты файла — чтобы можно было показать начало или сохранить пробник */
+  preview?: Uint8Array
 }
 
 export interface PublishResult {
@@ -98,6 +120,12 @@ export interface PublishResult {
   elapsedMs: number
   /** Репозиторий был создан этой самой операцией */
   repoCreated?: boolean
+  /** Сколько коммитов создано (при загрузке по частям — больше одного) */
+  commitCount: number
+  /** Файлы, которые не удалось загрузить из-за лимита GitHub */
+  skipped: SkippedFile[]
+  /** В репозитории нечего было менять: коммит не создавался */
+  nothingChanged?: boolean
 }
 
 export class GitHubError extends Error {
@@ -411,9 +439,12 @@ export class GitHubClient {
   /* ------------------------------ публикация ------------------------------ */
 
   /**
-   * Главная операция: залить файлы проекта в репозиторий одним коммитом.
+   * Заливает файлы одним коммитом.
+   *
    * Файлы, которые уже лежат в репозитории с тем же содержимым, повторно не
-   * передаются — прогресс «100%» на повторной загрузке почти мгновенный.
+   * передаются. Файлы больше 100 МБ GitHub через API не принимает: они не
+   * ломают загрузку, а пропускаются и возвращаются в `skipped`, чтобы
+   * приложение могло объяснить это пользователю.
    */
   async publishProject(input: {
     owner: string
@@ -427,24 +458,223 @@ export class GitHubClient {
     subdir?: string
     /** Сравнивать с уже загруженным (по умолчанию да) */
     skipUnchanged?: boolean
+    /** Пропускать файлы больше 100 МБ вместо ошибки (по умолчанию да) */
+    skipOversized?: boolean
+    /** Пробники содержимого слишком больших файлов (ключ — путь) */
+    previews?: Map<string, Uint8Array>
     onProgress?: (progress: UploadProgress) => void
     signal?: AbortSignal
   }): Promise<PublishResult> {
     const startedAt = Date.now()
-    const { owner, repo, files, author, signal, onProgress } = input
-    const skipUnchanged = input.skipUnchanged ?? true
+    const plan = await this.preparePublish(input)
 
+    const outcome = await this.pushCommit({
+      ...plan,
+      files: input.files,
+      author: input.author,
+      message: input.message,
+      baseParent: plan.parentCommit,
+      baseTree: plan.parentCommit ?? undefined,
+      progress: {
+        base: 0,
+        total: input.files.length,
+        bytesBase: 0,
+        bytesTotal: plan.bytesTotal,
+        commitIndex: 1,
+        commitTotal: 1,
+      },
+      onProgress: input.onProgress,
+      signal: input.signal,
+    })
+
+    if (!outcome.created) {
+      if (outcome.skipped.length && outcome.uploaded === 0 && outcome.reused === 0) {
+        throw new GitHubError(oversizedErrorText(outcome.skipped), 413)
+      }
+      if (!plan.parentCommit) throw new GitHubError('Нечего загружать: в проекте не осталось файлов.', 400)
+    }
+
+    return {
+      owner: plan.owner,
+      repo: plan.repo,
+      branch: plan.branch,
+      commitSha: outcome.commitSha,
+      commitUrl: `${plan.repoUrl}/commit/${outcome.commitSha}`,
+      repoUrl: plan.repoUrl,
+      branchUrl: `${plan.repoUrl}/tree/${encodeURIComponent(plan.branch)}`,
+      uploadedCount: outcome.uploaded,
+      reusedCount: outcome.reused,
+      bytesSent: outcome.bytesSent,
+      bytesTotal: plan.bytesTotal,
+      elapsedMs: Date.now() - startedAt,
+      commitCount: outcome.created ? 1 : 0,
+      skipped: outcome.skipped,
+      nothingChanged: !outcome.created,
+    }
+  }
+
+  /**
+   * Заливает проект несколькими коммитами: файлы режутся на пачки по
+   * `maxFiles` штук и `maxBytes` байт, каждая пачка — отдельный коммит.
+   * Так уходят проекты на десятки тысяч файлов: прогресс не «залипает»,
+   * а GitHub не упирается в лимиты одного запроса.
+   *
+   * Режимы:
+   *  - `append` — старые файлы репозитория сохраняются, рядом появляются новые
+   *    (содержимое файлов, которые в этом прогоне не отправлялись, аккуратно
+   *    восстанавливается из репозитория);
+   *  - `replace` — файлы, которых нет в проекте, из ветки удаляются.
+   */
+  async publishProjectInCommits(input: {
+    owner: string
+    repo: string
+    branch?: string
+    files: ProjectFile[]
+    message: string
+    author: Author
+    subdir?: string
+    skipUnchanged?: boolean
+    skipOversized?: boolean
+    previews?: Map<string, Uint8Array>
+    /** Сколько файлов максимум в одном коммите */
+    maxFiles?: number
+    /** Сколько байт максимум в одном коммите */
+    maxBytes?: number
+    /** Что делать с файлами, которых нет в проекте */
+    mode?: 'append' | 'replace'
+    onProgress?: (progress: UploadProgress) => void
+    signal?: AbortSignal
+  }): Promise<PublishResult> {
+    const startedAt = Date.now()
+    const plan = await this.preparePublish(input)
+    const mode = input.mode ?? 'append'
+
+    const batches = partitionFiles(input.files, {
+      maxFiles: input.maxFiles ?? MAX_COMMIT_FILES,
+      maxBytes: input.maxBytes ?? MAX_COMMIT_BYTES,
+    })
+
+    const existingByPath = plan.existingByPath
+
+    let baseParent: string | null = plan.parentCommit
+    // база для следующей пачки: дерево, собранное предыдущей
+    let previousTreeSha: string | undefined
+    let bytesSent = 0
+    let uploaded = 0
+    let reused = 0
+    let commitSha = plan.parentCommit ?? ''
+    let commits = 0
+    let filesDoneBefore = 0
+    const skipped: SkippedFile[] = []
+
+    /**
+     * Первая пачка в режиме `append` строится поверх истории, чтобы сохранить
+     * прежние файлы. В режиме `replace` база не передаётся вовсе — тогда ветка
+     * остаётся только с файлами проекта. Каждая следующая пачка опирается на
+     * дерево предыдущей, поэтому файлы ранних пачек не теряются.
+     */
+    const baseTreeFor = (index: number): string | undefined => {
+      if (index === 0) return mode === 'append' ? (plan.parentCommit ?? undefined) : undefined
+      return previousTreeSha
+    }
+
+    for (let index = 0; index < batches.length; index++) {
+      if (input.signal?.aborted) throw new DOMException('Загрузка отменена', 'AbortError')
+      const files = batches[index]!
+
+      const outcome = await this.pushCommit({
+        ...plan,
+        files,
+        author: input.author,
+        message:
+          batches.length > 1
+            ? `${input.message} — часть ${index + 1} из ${batches.length}`
+            : input.message,
+        baseParent,
+        baseTree: baseTreeFor(index),
+        existingByPath,
+        progress: {
+          base: filesDoneBefore,
+          total: input.files.length,
+          bytesBase: bytesSent,
+          bytesTotal: plan.bytesTotal,
+          commitIndex: index + 1,
+          commitTotal: batches.length,
+        },
+        onProgress: input.onProgress,
+        signal: input.signal,
+      })
+
+      baseParent = outcome.commitSha
+      filesDoneBefore += files.length
+      if (outcome.treeSha) previousTreeSha = outcome.treeSha
+      bytesSent += outcome.bytesSent
+      uploaded += outcome.uploaded
+      reused += outcome.reused
+      skipped.push(...outcome.skipped)
+      if (outcome.created) {
+        commits++
+        commitSha = outcome.commitSha
+      }
+    }
+
+    if (uploaded === 0 && reused === 0 && skipped.length > 0) {
+      throw new GitHubError(oversizedErrorText(skipped), 413)
+    }
+    if (commits === 0 && !plan.parentCommit) {
+      throw new GitHubError('Нечего загружать: в проекте не осталось файлов.', 400)
+    }
+
+    const repoUrl = `https://github.com/${plan.owner}/${plan.repo}`
+    return {
+      owner: plan.owner,
+      repo: plan.repo,
+      branch: plan.branch,
+      commitSha: commitSha || plan.parentCommit || '',
+      commitUrl: `${repoUrl}/commit/${commitSha || plan.parentCommit || ''}`,
+      repoUrl,
+      branchUrl: `${repoUrl}/tree/${encodeURIComponent(plan.branch)}`,
+      uploadedCount: uploaded,
+      reusedCount: reused,
+      bytesSent,
+      bytesTotal: plan.bytesTotal,
+      elapsedMs: Date.now() - startedAt,
+      commitCount: commits,
+      skipped,
+      nothingChanged: commits === 0,
+    }
+  }
+
+  /* --------------------- внутренняя кухня публикации ----------------------- */
+
+  /** Общая подготовка: проверка прав, ветка, существующие файлы. */
+  private async preparePublish(input: {
+    owner: string
+    repo: string
+    branch?: string
+    files: ProjectFile[]
+    subdir?: string
+    skipUnchanged?: boolean
+    skipOversized?: boolean
+    previews?: Map<string, Uint8Array>
+    onProgress?: (progress: UploadProgress) => void
+    signal?: AbortSignal
+  }): Promise<PrepareResult> {
+    const { owner, repo, files, signal, onProgress } = input
     if (files.length === 0) throw new GitHubError('Нет файлов для загрузки.', 400)
 
-    const tooBig = files.filter((file) => file.size > MAX_BLOB_SIZE)
-    if (tooBig.length) {
-      throw new GitHubError(
-        `GitHub принимает файлы не больше 100 МБ. Слишком большие: ${tooBig
-          .slice(0, 3)
-          .map((file) => `${file.path} (${Math.round(file.size / 1024 / 1024)} МБ)`)
-          .join(', ')}${tooBig.length > 3 ? ` и ещё ${tooBig.length - 3}` : ''}.`,
-        413,
-      )
+    const skipOversized = input.skipOversized ?? true
+    if (!skipOversized) {
+      const tooBig = files.filter((file) => file.size > MAX_BLOB_SIZE)
+      if (tooBig.length) {
+        throw new GitHubError(
+          `GitHub принимает файлы не больше 100 МБ. Слишком большие: ${tooBig
+            .slice(0, 3)
+            .map((file) => `${file.path} (${Math.round(file.size / 1024 / 1024)} МБ)`)
+            .join(', ')}${tooBig.length > 3 ? ` и ещё ${tooBig.length - 3}` : ''}.`,
+          413,
+        )
+      }
     }
 
     const bytesTotal = files.reduce((sum, file) => sum + file.size, 0)
@@ -460,7 +690,6 @@ export class GitHubClient {
 
     report({ phase: 'prepare', label: 'Проверяем репозиторий' })
 
-    // 1. Проверяем доступ и права на запись.
     const repoInfo = await this.getRepo(owner, repo, signal)
     if (repoInfo.permissions && repoInfo.permissions.push === false) {
       throw new GitHubError(
@@ -472,10 +701,10 @@ export class GitHubClient {
     const branch = input.branch?.trim() || repoInfo.default_branch
     const parentCommit = await this.getBranchHead(owner, repo, branch, signal)
 
-    // 2. Что уже есть в репозитории — чтобы не загружать то же самое повторно.
     report({ phase: 'prepare', label: parentCommit ? 'Сверяем файлы с репозиторием' : 'Готовим первый коммит' })
+
     const existingByPath = new Map<string, TreeEntry>()
-    if (parentCommit && skipUnchanged) {
+    if (parentCommit && (input.skipUnchanged ?? true)) {
       try {
         for (const entry of await this.getTree(owner, repo, parentCommit, signal)) {
           existingByPath.set(entry.path, entry)
@@ -485,16 +714,72 @@ export class GitHubClient {
       }
     }
 
-    const prefix = input.subdir ? input.subdir.replace(/^\/+|\/+$/g, '') : ''
-    const treePathOf = (path: string) => (prefix ? `${prefix}/${path}` : path)
+    return {
+      owner,
+      repo,
+      branch,
+      parentCommit,
+      existingByPath,
+      bytesTotal,
+      prefix: input.subdir ? input.subdir.replace(/^\/+|\/+$/g, '') : '',
+      repoUrl: `https://github.com/${owner}/${repo}`,
+      skipUnchanged: input.skipUnchanged ?? true,
+      allowOversizedSkip: skipOversized,
+      previews: input.previews ?? new Map<string, Uint8Array>(),
+    }
+  }
 
-    // 3. Блобы: читаем файлы порциями, чтобы не держать весь проект в памяти.
+  /** Один проход: блобы → дерево → коммит → ссылка на ветку. */
+  private async pushCommit(input: {
+    owner: string
+    repo: string
+    branch: string
+    files: ProjectFile[]
+    message: string
+    author: Author
+    prefix: string
+    baseParent: string | null
+    baseTree?: string
+    existingByPath: Map<string, TreeEntry>
+    skipUnchanged: boolean
+    allowOversizedSkip: boolean
+    previews: Map<string, Uint8Array>
+    progress: {
+      base: number
+      total: number
+      bytesBase: number
+      bytesTotal: number
+      commitIndex: number
+      commitTotal: number
+    }
+    onProgress?: (progress: UploadProgress) => void
+    signal?: AbortSignal
+  }): Promise<CommitOutcome> {
+    const { owner, repo, files, author, signal, onProgress, progress } = input
+    const treePathOf = (path: string) => (input.prefix ? `${input.prefix}/${path}` : path)
+
     const treeEntries: Array<Record<string, unknown>> = []
-    let uploadedCount = 0
-    let reusedCount = 0
+    const skipped: SkippedFile[] = []
+    let uploaded = 0
+    let reused = 0
     let bytesSent = 0
     let bytesReused = 0
     let processed = 0
+
+    const report = (phase: UploadPhase, label: string, currentPath?: string) =>
+      onProgress?.({
+        phase,
+        label,
+        done: progress.base + processed,
+        total: progress.total,
+        bytesSent: progress.bytesBase + bytesSent,
+        bytesTotal: progress.bytesTotal,
+        bytesReused,
+        currentPath,
+        commitIndex: progress.commitIndex,
+        commitTotal: progress.commitTotal,
+        skippedCount: skipped.length,
+      })
 
     const CHUNK = 16
     for (let start = 0; start < files.length; start += CHUNK) {
@@ -503,23 +788,27 @@ export class GitHubClient {
       const toUpload: Array<{ file: ProjectFile; content: Uint8Array }> = []
 
       for (const file of chunk) {
-        const content = await file.read()
         const target = treePathOf(file.path)
-        const known = existingByPath.get(target)
-        if (known && skipUnchanged && known.size === file.size) {
+
+        if (file.size > MAX_BLOB_SIZE) {
+          if (!input.allowOversizedSkip) {
+            throw new GitHubError(`Файл «${file.path}» больше 100 МБ — GitHub его не примет.`, 413)
+          }
+          skipped.push({ path: file.path, size: file.size, reason: 'too-big', preview: input.previews.get(file.path) })
+          processed++
+          report('blobs', 'Пропускаем файлы больше 100 МБ', file.path)
+          continue
+        }
+
+        const content = await file.read()
+        const known = input.existingByPath.get(target)
+        if (known && input.skipUnchanged && known.size === file.size) {
           const sha = await gitBlobSha(content)
           if (sha === known.sha) {
-            reusedCount++
+            reused++
             bytesReused += file.size
             processed++
-            report({
-              phase: 'blobs',
-              label: 'Проверяем содержимое',
-              done: processed,
-              bytesSent,
-              bytesReused,
-              currentPath: file.path,
-            })
+            report('blobs', 'Проверяем содержимое', file.path)
             continue
           }
         }
@@ -530,42 +819,32 @@ export class GitHubClient {
         if (signal?.aborted) throw new DOMException('Загрузка отменена', 'AbortError')
         const { sha } = await this.createBlob(owner, repo, content, signal)
         treeEntries.push({ path: treePathOf(file.path), mode: '100644', type: 'blob', sha })
-        uploadedCount++
+        uploaded++
         bytesSent += file.size
         processed++
-        report({
-          phase: 'blobs',
-          label: 'Загружаем файлы',
-          done: processed,
-          bytesSent,
-          bytesReused,
-          currentPath: file.path,
-        })
+        report('blobs', progress.commitTotal > 1 ? `Загружаем файлы (коммит ${progress.commitIndex} из ${progress.commitTotal})` : 'Загружаем файлы', file.path)
       })
     }
 
-    if (treeEntries.length === 0 && !parentCommit) {
-      throw new GitHubError('Нечего загружать: в проекте не осталось файлов.', 400)
+    // коммитить нечего — пустой коммит не создаём
+    if (treeEntries.length === 0) {
+      if (input.baseParent) {
+        return { commitSha: input.baseParent, treeSha: '', uploaded, reused, bytesSent, skipped, created: false }
+      }
+      return { commitSha: '', treeSha: '', uploaded, reused, bytesSent, skipped, created: false }
     }
 
-    // 4. Дерево — батчами по 1000 записей.
     const batches: Array<Array<Record<string, unknown>>> = []
     for (let index = 0; index < treeEntries.length; index += TREE_BATCH_SIZE) {
       batches.push(treeEntries.slice(index, index + TREE_BATCH_SIZE))
     }
 
-    let baseTree = parentCommit ?? undefined
+    let baseTree = input.baseTree
     if (batches.length === 0) {
-      report({ phase: 'trees', label: 'Структура файлов уже актуальна', done: files.length, bytesSent, bytesReused })
+      report('trees', 'Структура файлов уже актуальна')
     } else {
       for (let index = 0; index < batches.length; index++) {
-        report({
-          phase: 'trees',
-          label: `Собираем структуру каталогов (${index + 1} из ${batches.length})`,
-          done: processed,
-          bytesSent,
-          bytesReused,
-        })
+        report('trees', `Собираем структуру каталогов (${index + 1} из ${batches.length})`)
         const created = await this.createTree(owner, repo, batches[index]!, baseTree, signal)
         baseTree = created.sha
       }
@@ -573,45 +852,21 @@ export class GitHubClient {
 
     if (!baseTree) throw new GitHubError('Не удалось построить дерево файлов.', 500)
 
-    // 5. Коммит.
-    report({ phase: 'commit', label: 'Создаём коммит', done: processed, bytesSent, bytesReused })
+    report('commit', 'Создаём коммит')
     const commit = await this.createCommit(
       owner,
       repo,
-      { message: input.message, tree: baseTree, parents: parentCommit ? [parentCommit] : [], author },
+      { message: input.message, tree: baseTree, parents: input.baseParent ? [input.baseParent] : [], author },
       signal,
     )
 
-    // 6. Переводим ветку на новый коммит.
-    report({ phase: 'ref', label: 'Обновляем ветку', done: processed, bytesSent, bytesReused })
-    await this.updateRef(owner, repo, branch, commit.sha, { create: !parentCommit }, signal)
+    report('ref', progress.commitTotal > 1 ? `Обновляем ветку (${progress.commitIndex} из ${progress.commitTotal})` : 'Обновляем ветку')
+    await this.updateRef(owner, repo, input.branch, commit.sha, { create: !input.baseParent }, signal)
 
-    report({
-      phase: 'ref',
-      label: 'Готово',
-      done: files.length,
-      bytesSent,
-      bytesReused,
-    })
-
-    const repoUrl = `https://github.com/${owner}/${repo}`
-    return {
-      owner,
-      repo,
-      branch,
-      commitSha: commit.sha,
-      commitUrl: `${repoUrl}/commit/${commit.sha}`,
-      repoUrl,
-      branchUrl: `${repoUrl}/tree/${encodeURIComponent(branch)}`,
-      uploadedCount,
-      reusedCount,
-      bytesSent,
-      bytesTotal,
-      elapsedMs: Date.now() - startedAt,
-    }
+    return { commitSha: commit.sha, treeSha: baseTree, uploaded, reused, bytesSent, skipped, created: true }
   }
 
-  /** Создаёт репозиторий и сразу заливает проект одним коммитом. */
+  /** Создаёт репозиторий и сразу заливает проект (одним коммитом или частями). */
   async createRepoAndPublish(input: {
     name: string
     private: boolean
@@ -622,8 +877,13 @@ export class GitHubClient {
     message: string
     author: Author
     subdir?: string
-    /** Сравнивать содержимое с уже загруженным (по умолчанию да) */
     skipUnchanged?: boolean
+    skipOversized?: boolean
+    previews?: Map<string, Uint8Array>
+    maxFiles?: number
+    maxBytes?: number
+    /** Заливать несколькими коммитами */
+    inCommits?: boolean
     onProgress?: (progress: UploadProgress) => void
     onRepoCreated?: (repo: GitHubRepo) => void
     signal?: AbortSignal
@@ -639,7 +899,7 @@ export class GitHubClient {
     input.onRepoCreated?.(repo)
 
     const account = repo.owner?.login || input.owner
-    const result = await this.publishProject({
+    const shared = {
       owner: account,
       repo: repo.name,
       branch: repo.default_branch || 'main',
@@ -647,10 +907,17 @@ export class GitHubClient {
       message: input.message,
       author: input.author,
       subdir: input.subdir,
-      skipUnchanged: input.skipUnchanged,
+      skipUnchanged: false, // репозиторий только что создан: сравнивать не с чем
+      skipOversized: input.skipOversized,
+      previews: input.previews,
       onProgress: input.onProgress,
       signal: input.signal,
-    })
+    }
+
+    const result = input.inCommits
+      ? await this.publishProjectInCommits({ ...shared, maxFiles: input.maxFiles, maxBytes: input.maxBytes })
+      : await this.publishProject(shared)
+
     return { ...result, repoCreated: true }
   }
 
@@ -675,4 +942,78 @@ export class GitHubClient {
       input.signal,
     )
   }
+}
+
+/* ------------------------- вспомогательные функции ------------------------- */
+
+interface PrepareResult {
+  owner: string
+  repo: string
+  branch: string
+  parentCommit: string | null
+  existingByPath: Map<string, TreeEntry>
+  bytesTotal: number
+  prefix: string
+  repoUrl: string
+  skipUnchanged: boolean
+  allowOversizedSkip: boolean
+  previews: Map<string, Uint8Array>
+}
+
+interface CommitOutcome {
+  commitSha: string
+  /** sha собранного дерева — база для следующего коммита в цепочке */
+  treeSha: string
+  uploaded: number
+  reused: number
+  bytesSent: number
+  skipped: SkippedFile[]
+  /** Коммит действительно создан (а не «изменений не было») */
+  created: boolean
+}
+
+/**
+ * Режет список файлов на пачки: не больше `maxFiles` штук и `maxBytes` байт в
+ * каждой. Один файл больше лимита выделяется в собственную пачку, чтобы
+ * загрузка не зациклилась.
+ */
+export function partitionFiles(
+  files: ProjectFile[],
+  limits: { maxFiles: number; maxBytes: number },
+): ProjectFile[][] {
+  const batches: ProjectFile[][] = []
+  let current: ProjectFile[] = []
+  let currentBytes = 0
+
+  for (const file of files) {
+    const wouldOverflow =
+      current.length > 0 && (current.length >= limits.maxFiles || currentBytes + file.size > limits.maxBytes)
+    if (wouldOverflow) {
+      batches.push(current)
+      current = []
+      currentBytes = 0
+    }
+    current.push(file)
+    currentBytes += file.size
+  }
+  if (current.length) batches.push(current)
+  return batches
+}
+
+/** Человеческое объяснение про файлы, которые GitHub не примет через API. */
+export function oversizedErrorText(skipped: SkippedFile[]): string {
+  const list = skipped
+    .slice(0, 3)
+    .map((file) => `${file.path} (${Math.round(file.size / 1024 / 1024)} МБ)`)
+    .join(', ')
+  const rest = skipped.length > 3 ? ` и ещё ${skipped.length - 3}` : ''
+  return (
+    `GitHub через API принимает файлы не больше 100 МБ, а в проекте, кроме них, ничего не осталось: ${list}${rest}. ` +
+    'Выгрузите большие файлы отдельно — например, через Git LFS или обычный git-клиент.'
+  )
+}
+
+/** Сколько коммитов потребуется для такого набора файлов. */
+export function countCommits(files: ProjectFile[], limits: { maxFiles: number; maxBytes: number }): number {
+  return partitionFiles(files, limits).length
 }

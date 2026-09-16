@@ -17,6 +17,11 @@ export interface ProjectFile {
   size: number
   /** Ленивое чтение содержимого */
   read(): Promise<Uint8Array>
+  /**
+   * Первые байты файла. Нужны для файлов больше 100 МБ: GitHub их через API
+   * не принимает, но показать пользователю начало файла всё равно полезно.
+   */
+  readPreview?(limit?: number): Promise<Uint8Array>
 }
 
 export interface Project {
@@ -133,6 +138,7 @@ function fileFromHandle(file: File, path: string): ProjectFile {
     path: normalizePath(path),
     size: file.size,
     read: async () => new Uint8Array(await file.arrayBuffer()),
+    readPreview: async (limit = 256 * 1024) => new Uint8Array(await file.slice(0, limit).arrayBuffer()),
   }
 }
 
@@ -236,7 +242,12 @@ export async function projectFromZip(file: File, onProgress?: (progress: ScanPro
     if (entry.directory) continue
     const path = normalizePath(entry.path)
     if (!path || isVcsPath(path) || JUNK_IN_ARCHIVE.test(path)) continue
-    files.push({ path, size: entry.size, read: entry.read })
+    files.push({
+      path,
+      size: entry.size,
+      read: entry.read,
+      readPreview: entry.readPreview ? (limit?: number) => entry.readPreview!(limit) : undefined,
+    })
     bytes += entry.size
     if (files.length % 250 === 0) onProgress?.({ files: files.length, bytes, current: path })
   }
