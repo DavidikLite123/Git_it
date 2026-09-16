@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Git it — загрузите папку или ZIP с проектом прямо в GitHub. Без командной строки, без git."
+    />
+    <meta name="theme-color" content="#0b0f19" />
+    <title>Git it — загрузить проект в GitHub</title>
+    <script>
+      // тема применяется до отрисовки, чтобы не мигало
+      try {
+        var t = localStorage.getItem('gitit.theme')
+        if (!t) t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+        document.documentElement.dataset.theme = t
+      } catch (e) {
+        document.documentElement.dataset.theme = 'dark'
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
