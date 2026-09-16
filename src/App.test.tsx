@@ -106,6 +106,11 @@ function seedAcceptance() {
   )
 }
 
+/** Кнопка «Начать» на приветственном экране — обязательный вход в приложение. */
+function enterApp() {
+  fireEvent.click(screen.getByRole('button', { name: 'Начать' }))
+}
+
 async function signIn() {
   const input = document.getElementById('token')!
   fireEvent.change(input, { target: { value: 'ghp_test_token' } })
@@ -182,11 +187,27 @@ describe('первый запуск: приветствие и соглашен�
     expect(typeof saved.acceptedAt).toBe('string')
   })
 
-  it('при уже принятом соглашении сразу показывает рабочий экран', () => {
+  it('при уже принятом соглашении приветствие показывается, а «Начать» сразу открывает приложение', () => {
     seedAcceptance()
     render(<App />)
+
+    // экран «о проекте» показывается при каждом заходе
+    expect(screen.getByText('Как это работает')).toBeTruthy()
+    expect(screen.getByText(/Соглашение версии .* принято/)).toBeTruthy()
+    expect(document.getElementById('token')).toBeNull()
+
+    enterApp()
     expect(document.getElementById('token')).toBeTruthy()
     expect(screen.getByText(/Подключите GitHub/i)).toBeTruthy()
+  })
+
+  it('в приложении видна ссылка на соглашение с датой принятия', () => {
+    seedAcceptance()
+    render(<App />)
+    enterApp()
+    const link = screen.getByRole('button', { name: /Лицензионное соглашение/i })
+    expect(link.textContent).toContain(AGREEMENT_VERSION)
+    expect(document.body.textContent).toContain('принято')
   })
 
   it('текст соглашения в приложении и в AGREEMENT.md совпадает по смыслу', () => {
@@ -203,6 +224,7 @@ describe('Git it — полный сценарий', () => {
 
   it('подключается к GitHub, читает папку и заливает проект в новый репозиторий', async () => {
     render(<App />)
+    enterApp()
 
     expect(screen.getByText(/Подключите GitHub/i)).toBeTruthy()
     await signIn()
@@ -257,6 +279,7 @@ describe('Git it — полный сценарий', () => {
 
   it('показывает прогресс и понятную ошибку, если GitHub отказал в правах', async () => {
     render(<App />)
+    enterApp()
     await signIn()
 
     importFolder([fileOf('demo/index.html', '<h1>привет</h1>')])
@@ -296,6 +319,7 @@ describe('Git it — полный сценарий', () => {
     ]
 
     render(<App />)
+    enterApp()
     await signIn()
 
     importFolder([fileOf('demo/src/main.ts', 'console.log(1)'), fileOf('demo/src/extra.ts', 'console.log(2)')])
@@ -328,6 +352,7 @@ describe('выгрузка частями и большие файлы', () => {
 
   it('заливает проект несколькими коммитами, когда файлов больше лимита пачки', async () => {
     render(<App />)
+    enterApp()
     await signIn()
 
     importFolder(
@@ -359,6 +384,7 @@ describe('выгрузка частями и большие файлы', () => {
 
   it('файлы больше 100 МБ не ломают выгрузку: их пропускают с отчётом', async () => {
     render(<App />)
+    enterApp()
     await signIn()
 
     importFolder([
@@ -390,6 +416,7 @@ describe('выгрузка частями и большие файлы', () => {
 
   it('с выключенным пропуском останавливает выгрузку и объясняет причину', async () => {
     render(<App />)
+    enterApp()
     await signIn()
 
     importFolder([fileOf('demo/ok.ts', 'ok'), hugeFileOf('demo/huge.bin', 200 * 1024 * 1024)])

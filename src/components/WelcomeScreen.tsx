@@ -9,6 +9,10 @@ import {
 
 interface Props {
   onStart: () => void
+  /** Перечитать уже принятое соглашение */
+  onReadAgreement: () => void
+  /** Действующая версия соглашения уже принята */
+  agreementAccepted: boolean
   acceptance: AgreementAcceptance | null
 }
 
@@ -31,7 +35,7 @@ const STEPS: Array<{ title: string; text: string }> = [
   },
 ]
 
-export function WelcomeScreen({ onStart, acceptance }: Props) {
+export function WelcomeScreen({ onStart, onReadAgreement, agreementAccepted, acceptance }: Props) {
   return (
     <div className="welcome">
       <section className="hero">
@@ -107,10 +111,20 @@ export function WelcomeScreen({ onStart, acceptance }: Props) {
         <div>
           <h2>Поехали?</h2>
           <p className="muted">
-            Перед началом нужно ознакомиться с лицензионным соглашением — это займёт пару минут. Дочитайте его до конца:
-            кнопка согласия появится только тогда, когда вы действительно дойдёте до последнего абзаца.
+            {agreementAccepted
+              ? 'Соглашение уже принято — можно сразу переходить к делу. Перечитать его можно в любой момент.'
+              : 'Перед началом нужно ознакомиться с лицензионным соглашением — это займёт пару минут. Дочитайте его до конца: кнопка согласия появится только тогда, когда вы действительно дойдёте до последнего абзаца.'}
           </p>
-          {acceptance && acceptance.version !== AGREEMENT_VERSION ? (
+          {agreementAccepted ? (
+            <p className="notice notice-ok">
+              <Check size={18} /> Соглашение версии {AGREEMENT_VERSION} принято{' '}
+              {acceptance ? formatAcceptanceDate(acceptance.acceptedAt) : ''} — нажмите «Начать», и сразу откроется
+              рабочий экран.{' '}
+              <button type="button" className="link-btn" onClick={onReadAgreement}>
+                Перечитать соглашение
+              </button>
+            </p>
+          ) : acceptance && acceptance.version !== AGREEMENT_VERSION ? (
             <p className="notice notice-warn">
               <Check size={18} /> Раньше вы приняли версию {acceptance.version} ({formatAcceptanceDate(acceptance.acceptedAt)}
               ). Вышла новая версия — прочитайте её и подтвердите согласие заново.

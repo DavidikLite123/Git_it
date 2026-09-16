@@ -31,7 +31,14 @@ import {
   type ProjectSource,
 } from './lib/project'
 import { ZipError } from './lib/zip'
-import { formatAcceptanceDate, formatAgreementVersion, isAgreementAccepted, readAcceptance, saveAcceptance, type AgreementAcceptance } from './lib/agreement'
+import {
+  AGREEMENT_VERSION,
+  formatAcceptanceDate,
+  formatAgreementVersion,
+  readAcceptance,
+  saveAcceptance,
+  type AgreementAcceptance,
+} from './lib/agreement'
 import { formatBytes, formatFiles, formatNumber } from './lib/format'
 
 const STEPS = ['Соглашение', 'GitHub', 'Проект', 'Отправка']
@@ -59,8 +66,22 @@ export default function App() {
   /* ------------------------------ онбординг ------------------------------- */
 
   const [acceptance, setAcceptance] = useState<AgreementAcceptance | null>(() => readAcceptance())
-  const [view, setView] = useState<View>(() => (isAgreementAccepted() ? 'app' : 'welcome'))
+  // приветственный экран показывается при каждом заходе на сайт
+  const [view, setView] = useState<View>('welcome')
   const [readOnlyAgreement, setReadOnlyAgreement] = useState(false)
+
+  const agreementAccepted = acceptance?.version === AGREEMENT_VERSION
+
+  /** «Начать»: если соглашение уже принято — сразу в приложение, иначе к чтению. */
+  const startFromWelcome = useCallback(() => {
+    if (acceptance?.version === AGREEMENT_VERSION) {
+      setView('app')
+      return
+    }
+    openAgreementRef.current?.(false)
+  }, [acceptance])
+
+  const openAgreementRef = useRef<((readOnly: boolean) => void) | null>(null)
 
   /* -------------------------------- проект -------------------------------- */
 
@@ -426,12 +447,19 @@ export default function App() {
     setView('agreement')
   }, [])
 
+  openAgreementRef.current = openAgreement
+
   /* --------------------------------- рендер -------------------------------- */
 
   if (view === 'welcome') {
     return (
       <Shell theme={theme} onToggleTheme={toggle}>
-        <WelcomeScreen onStart={() => openAgreement(false)} acceptance={acceptance} />
+        <WelcomeScreen
+          onStart={startFromWelcome}
+          onReadAgreement={() => openAgreement(true)}
+          agreementAccepted={agreementAccepted}
+          acceptance={acceptance}
+        />
       </Shell>
     )
   }
